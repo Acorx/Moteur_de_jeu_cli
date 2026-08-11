@@ -1,0 +1,7 @@
+{
+  "schema": "aetherion.capture-views/v1",
+  "views": [
+    {"name":"overview","width":160,"height":120,"format":"png","camera":{"x":0,"y":0,"pixels_per_unit":4}},
+    {"name":"player_close","width":96,"height":96,"format":"png","camera":{"x":5,"y":0,"pixels_per_unit":8}}
+  ]
+}

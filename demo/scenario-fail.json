@@ -1,0 +1,17 @@
+{
+  "schema": "aetherion.scenario/v1",
+  "project": { "name": "hello-aetherion" },
+  "max_ticks": 3,
+  "events": [],
+  "assertions": [
+    { "id": "echec-demonstration", "type": "entity_position", "entity_id": 1, "x": 999, "y": 0 }
+  ],
+  "budgets": {
+    "max_ticks": 3,
+    "max_events": 0,
+    "max_assertions": 1,
+    "max_input_bytes": 65536,
+    "max_output_bytes": 262144,
+    "advisory_timeout_ms": 1000
+  }
+}

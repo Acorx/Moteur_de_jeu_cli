@@ -1,0 +1,25 @@
+{
+  "schema": "aetherion.scenario/v1",
+  "project": { "name": "hello-aetherion" },
+  "max_ticks": 10,
+  "events": [
+    { "tick": 2, "sequence": 0, "entity_id": 1, "command": "impulse", "x": 1, "y": 1 },
+    { "tick": 5, "sequence": 0, "entity_id": 1, "command": "stop" },
+    { "tick": 7, "sequence": 0, "entity_id": 3, "command": "translate", "x": 2, "y": 0 }
+  ],
+  "assertions": [
+    { "id": "position-tick-2", "tick": 2, "type": "entity_position", "entity_id": 1, "x": 2, "y": 0 },
+    { "id": "position-finale", "type": "entity_position", "entity_id": 1, "x": 8, "y": 3 },
+    { "id": "velocite-finale", "type": "entity_velocity", "entity_id": 1, "x": 0, "y": 0 },
+    { "id": "trois-entites", "type": "entity_count", "value": 3 },
+    { "id": "joueur-visible", "type": "entity_visible", "entity_id": 1, "value": true }
+  ],
+  "budgets": {
+    "max_ticks": 10,
+    "max_events": 3,
+    "max_assertions": 5,
+    "max_input_bytes": 65536,
+    "max_output_bytes": 262144,
+    "advisory_timeout_ms": 1000
+  }
+}

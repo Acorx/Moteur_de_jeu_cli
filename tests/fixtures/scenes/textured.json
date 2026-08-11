@@ -1,0 +1,17 @@
+{
+  "schema": "aetherion.scene/v1",
+  "id": "textured",
+  "metadata": { "title": "Textured fixture", "tags": ["fixture", "m4"] },
+  "camera": { "x": 0, "y": 0, "pixels_per_unit": 4 },
+  "assets": ["checker"],
+  "entities": [
+    {
+      "id": 7,
+      "name": "scene-sprite",
+      "position": { "x": 0, "y": 0 },
+      "velocity": { "x": 0, "y": 0 },
+      "appearance": { "width": 2, "height": 2, "color": [80, 220, 120] },
+      "sprite": { "asset": "checker" }
+    }
+  ]
+}

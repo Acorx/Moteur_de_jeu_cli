@@ -1,0 +1,8 @@
+{"schema":"aetherion.agent-request/v1","request_id":"h1","method":"handshake","params":{}}
+{"schema":"aetherion.agent-request/v1","request_id":"s1","method":"session.create","params":{}}
+{"schema":"aetherion.agent-request/v1","request_id":"d1","method":"transaction.execute","params":{"session_id":"session-1","dry_run":true,"expected_revision":0,"operations":[{"method":"world.step","params":{"ticks":2,"events":[]}}]}}
+{"schema":"aetherion.agent-request/v1","request_id":"c1","method":"transaction.execute","params":{"session_id":"session-1","expected_revision":0,"operations":[{"method":"world.step","params":{"ticks":2,"events":[]}}]}}
+{"schema":"aetherion.agent-request/v1","request_id":"i1","method":"world.inspect","params":{"session_id":"session-1"}}
+{"schema":"aetherion.agent-request/v1","request_id":"stale","method":"world.step","params":{"session_id":"session-1","ticks":1,"events":[],"expected_revision":0}}
+{"schema":"aetherion.agent-request/v1","request_id":"rollback","method":"transaction.execute","params":{"session_id":"session-1","expected_revision":1,"operations":[{"method":"input.apply","params":{"events":[{"tick":0,"sequence":0,"entity_id":999,"command":"stop"}]}}]}}
+{"schema":"aetherion.agent-request/v1","request_id":"x1","method":"session.close","params":{"session_id":"session-1"}}

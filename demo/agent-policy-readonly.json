@@ -1,0 +1,18 @@
+{
+  "schema": "aetherion.capability-policy/v1",
+  "capabilities": {
+    "project_read": true,
+    "world_mutate": false,
+    "capture": false,
+    "file_write": false
+  },
+  "limits": {
+    "max_line_bytes": 65536,
+    "max_operations": 16,
+    "max_ticks_per_request": 100,
+    "max_events": 100,
+    "max_captures": 2,
+    "max_output_bytes": 1048576,
+    "max_audit_bytes": 1048576
+  }
+}

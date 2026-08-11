@@ -1,0 +1,77 @@
+{
+  "schema": "aetherion.capture/v1",
+  "project": "hello-aetherion",
+  "tick": 5,
+  "world_checksum": 17592328966257979783,
+  "image_checksum": 3823426636555325831,
+  "path": "demo/capture.ppm",
+  "format": "ppm-p6",
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "camera": {
+    "x": 0,
+    "y": 0,
+    "pixels_per_unit": 8
+  },
+  "visible_entities": [
+    {
+      "id": 1,
+      "name": "player",
+      "world_position": {
+        "x": 5,
+        "y": 0
+      },
+      "screen_bounds": {
+        "x": 188,
+        "y": 78,
+        "width": 24,
+        "height": 24
+      },
+      "color": [
+        80,
+        220,
+        120
+      ]
+    },
+    {
+      "id": 2,
+      "name": "beacon",
+      "world_position": {
+        "x": 10,
+        "y": 5
+      },
+      "screen_bounds": {
+        "x": 232,
+        "y": 34,
+        "width": 16,
+        "height": 32
+      },
+      "color": [
+        255,
+        190,
+        60
+      ]
+    },
+    {
+      "id": 3,
+      "name": "sentinel",
+      "world_position": {
+        "x": -8,
+        "y": -4
+      },
+      "screen_bounds": {
+        "x": 80,
+        "y": 114,
+        "width": 32,
+        "height": 16
+      },
+      "color": [
+        80,
+        150,
+        255
+      ]
+    }
+  ]
+}

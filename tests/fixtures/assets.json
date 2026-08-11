@@ -1,0 +1,13 @@
+{
+  "schema": "aetherion.assets/v1",
+  "budgets": { "max_count": 4, "max_bytes": 1024 },
+  "assets": [
+    {
+      "id": "checker",
+      "path": "checker.pam",
+      "type": "pam-rgba",
+      "size": 81,
+      "checksum": 4068880420609177492
+    }
+  ]
+}

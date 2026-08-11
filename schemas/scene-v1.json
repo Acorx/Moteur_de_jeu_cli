@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/scene-v1.json",
+  "title": "Aetherion Scene v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "entities"],
+  "properties": {
+    "schema": { "const": "aetherion.scene/v1" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "pixels_per_unit": { "type": "integer", "minimum": 1, "maximum": 1024 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+    },
+    "entities": { "type": "array", "maxItems": 10000, "items": { "type": "object" } }
+  }
+}
