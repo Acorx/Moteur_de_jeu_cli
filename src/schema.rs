@@ -43,6 +43,10 @@ pub const SCHEMAS: &[(&str, &str)] = &[
         include_str!("../schemas/visual-diff-v1.json"),
     ),
     ("scene3d", include_str!("../schemas/scene3d-v1.json")),
+    (
+        "gltf-import",
+        include_str!("../schemas/gltf-import-v1.json"),
+    ),
     ("assets3d", include_str!("../schemas/assets3d-v1.json")),
     ("capture3d", include_str!("../schemas/capture3d-v1.json")),
     (

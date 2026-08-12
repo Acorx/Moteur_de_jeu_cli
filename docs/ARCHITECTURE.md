@@ -69,3 +69,11 @@ Le pipeline temps reel est optionnel et n'est pas une extension du chemin determ
 Le backend initialise une surface, choisit un format sRGB et le mode FIFO lorsque le pilote le propose, puis rend un pipeline de triangles colores avec depth buffer `Depth24Plus`. Les erreurs de surface sont classees (`Lost`, `Outdated`, `Timeout`, `OutOfMemory`) et la boucle redimensionne la surface sans interrompre la simulation. Ce rendu n'est pas une preuve de determinisme et ne remplace pas les captures CPU.
 
 La decision complete est documentee dans [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md). Les prochaines extensions doivent conserver cette frontiere avant d'ajouter textures, glTF, animation GPU, culling ou physique de presentation.
+
+## Import glTF M12.1
+
+`gltf3d` est active par la feature optionnelle `gltf-import`; `render-gpu` l'active automatiquement. `gltf-import --input FILE --output FILE` lit les fichiers glTF et GLB via le loader glTF, selectionne la scene par defaut (ou la premiere scene), parcourt les noeuds dans l'ordre du document et convertit chaque primitive `TRIANGLES` en `Mesh3d`/`Object3d` du format `aetherion.scene3d/v1`.
+
+Les matrices locales sont composees avec les matrices parentes puis cuites dans les sommets. Les positions flottantes sont quantifiees au millieme avec un arrondi symetrique et controle de finitude/overflow. Les facteurs de couleur PBR deviennent des `Material3d` RGB8/opacity milli-unitaire. Les IDs produits sont derives des index glTF, donc stables independamment des noms optionnels. Les textures, skins, morph targets et animations sont explicitement hors de cette tranche et les modes primitifs autres que triangles sont refuses.
+
+Le fichier principal est limite a 16 MiB et les buffers charges a 64 MiB avant validation du scene. La sortie JSON est validee par le meme contrat que `capture3d`, serialisee avec `serde_json::to_vec_pretty`, terminee par LF et publiee atomiquement sans ecraser une sortie existante. Le rapport `aetherion.gltf-import/v1` expose uniquement des compteurs et la version d'echelle, sans chemin local.

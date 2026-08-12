@@ -8,6 +8,7 @@ pub mod diff;
 pub mod display;
 pub mod ecs;
 pub mod error;
+pub mod gltf3d;
 pub mod gpu3d;
 pub mod plugin;
 #[cfg(feature = "plugin-runtime")]
@@ -94,6 +95,10 @@ pub enum Command {
         width: u32,
         height: u32,
         assets: Option<PathBuf>,
+    },
+    GltfImport {
+        input: PathBuf,
+        output: PathBuf,
     },
     Asset3dImport {
         input: PathBuf,
@@ -643,6 +648,10 @@ impl Command {
                 kind: asset3d_type.ok_or("asset3d-import requiert --type")?,
                 output: output.ok_or("asset3d-import requiert --output")?,
             }),
+            "gltf-import" => Ok(Self::GltfImport {
+                input: input.ok_or("gltf-import requiert --input")?,
+                output: output.ok_or("gltf-import requiert --output")?,
+            }),
             "play" => Ok(Self::Play { path, max_ticks }),
             "replay-create" => Ok(Self::ReplayCreate {
                 path,
@@ -906,7 +915,7 @@ fn parse_percent_option(value: &str, option: &str) -> Result<u64> {
 }
 
 pub fn help() -> &'static str {
-    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  gpu-demo       Ouvre une scÃƒÂ¨ne 3D temps rÃƒÂ©el via wgpu\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte, exécute ou liste les plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM11 GPU:\n  gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] (requiert --features render-gpu)\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
+    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  gpu-demo       Ouvre une scÃƒÂ¨ne 3D temps rÃƒÂ©el via wgpu\n  gltf-import    Convertit un fichier glTF/GLB en Scene3d canonique\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte, exécute ou liste les plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM11 GPU:\n  gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] (requiert --features render-gpu)\n\nM12 glTF:\n  gltf-import --input FILE --output FILE (requiert --features gltf-import)\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
 }
 
 pub fn execute(command: Command) -> Result<Option<String>> {
@@ -1052,6 +1061,12 @@ pub fn execute(command: Command) -> Result<Option<String>> {
         } => {
             gpu3d::run(&scene, assets.as_deref(), width, height)?;
             Ok(None)
+        }
+        Command::GltfImport { input, output } => {
+            let summary = gltf3d::import(&input, &output)?;
+            Ok(Some(serde_json::to_string_pretty(&summary).map_err(
+                |error| format!("gltf_import_report_serialize: {error}"),
+            )?))
         }
         Command::Asset3dImport {
             input,
@@ -1316,6 +1331,25 @@ mod tests {
     #[test]
     fn rejects_unknown_command() {
         assert!(Command::parse(&["fly".into()]).is_err());
+    }
+
+    #[test]
+    fn parses_gltf_import() {
+        let args = [
+            "gltf-import",
+            "--input",
+            "model.glb",
+            "--output",
+            "scene.json",
+        ]
+        .map(str::to_string);
+        assert_eq!(
+            Command::parse(&args).unwrap(),
+            Command::GltfImport {
+                input: PathBuf::from("model.glb"),
+                output: PathBuf::from("scene.json"),
+            }
+        );
     }
 
     #[test]

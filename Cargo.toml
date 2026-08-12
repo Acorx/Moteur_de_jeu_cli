@@ -9,7 +9,14 @@ license = "MIT OR Apache-2.0"
 default = []
 display = []
 plugin-runtime = ["dep:wasmi"]
-render-gpu = ["dep:bytemuck", "dep:glam", "dep:pollster", "dep:wgpu", "dep:winit"]
+gltf-import = ["dep:glam", "dep:gltf"]
+render-gpu = [
+    "gltf-import",
+    "dep:bytemuck",
+    "dep:pollster",
+    "dep:wgpu",
+    "dep:winit",
+]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -18,6 +25,7 @@ toml = "0.8"
 wasmi = { version = "0.32.3", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
 glam = { version = "0.29", optional = true }
+gltf = { version = "1.4", optional = true, features = ["import"] }
 pollster = { version = "0.3", optional = true }
 wgpu = { version = "0.19", optional = true }
 winit = { version = "0.29", optional = true }

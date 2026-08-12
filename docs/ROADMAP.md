@@ -110,6 +110,14 @@ Le chemin headless par défaut reste compilable et exécutable sans dépendances
 
 **Critères restant pour clôturer M11 :** scène de benchmark versionnée, mesure FPS/temps CPU/GPU, capture de référence contrôlée et validation sur Windows/Linux/macOS avec au moins un backend logiciel CI.
 
+## M12 — Assets glTF (tranche 1 présente)
+
+**Présent et couvert :** feature `gltf-import` optionnelle, commande `gltf-import --input FILE --output FILE`, support glTF/GLB, selection de la scene par defaut, traversal hierarchique des noeuds, composition des transformations, import des positions et indices de primitives triangulees, conversion des couleurs PBR de base et publication canonique `aetherion.scene3d/v1`.
+
+Les quotas d'entree (16 MiB), buffers (64 MiB), validation des nombres, overflow de quantification, primitives non triangulees, indices hors limites et sorties existantes sont refuses avec des erreurs stables. Les textures, skins, morph targets, normales, UV, animations et materiaux textures restent explicitement futures. `render-gpu` active automatiquement cette tranche afin qu'un fichier importe puisse etre affiche par `gpu-demo`.
+
+**Prochaines tranches M12 :** conserver normales/UV dans un format de mesh v2 retrocompatible, cache d'assets par checksum, chargement asynchrone et materiaux textures avec quotas.
+
 ## M8 — Tooling, build et packaging (futur)
 
 CI multi-plateforme, artefacts signés, SBOM, vérification des schémas/migrations, profils de build headless minimaux, cache déterministe et installateur/versionnement documentés. Cible mesurable : installation propre, exécution des smoke tests et désinstallation automatisées sur chaque plateforme supportée.

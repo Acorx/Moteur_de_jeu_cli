@@ -17,6 +17,7 @@ cargo run -- capture --path ./demo --ticks 5 --output ./demo/capture.ppm
 cargo run -- capture --path ./demo --ticks 5 --format png --channels color,depth,normals,segmentation --output ./demo/capture.png
 cargo run -- capture-multi --path ./demo --views ./demo/views.json --output-dir ./demo/views-out
 cargo run -- capture3d --scene ./demo/scene3d.json --animation walk --ticks 12 --output ./demo/capture3d.ppm --width 320 --height 240
+cargo run --features gltf-import -- gltf-import --input ./assets/model.glb --output ./demo/imported-scene.json
 cargo run --features render-gpu -- gpu-demo --scene ./demo/scene3d.json --width 1280 --height 720
 cargo run --features display -- play --path ./demo --max-ticks 300
 cargo run -- replay-create --path ./demo --ticks 10 --events ./demo/events.json --checkpoint-interval 4 --output ./demo/demo-v2.replay.json
@@ -104,6 +105,8 @@ Le schéma strict `aetherion.scene3d/v1` accepte toujours les `triangles` histor
 Limites actuelles : scène 1 MiB, 10 000 meshes, 10 000 matériaux, 100 000 objets, 100 000 triangles développés, 300 000 sommets et 16 777 216 pixels. Les identifiants et références sont validés strictement, les indices hors limites sont rejetés et le rendu suit un ordre canonique. `capture3d` publie atomiquement un PPM et un manifeste adjacent ; une validation échouée retourne le code 2 sans sortie partielle.
 
 Le prototype temps réel s'utilise avec `cargo run --features render-gpu -- gpu-demo --scene FILE [--assets FILE]`. Il partage la validation et la résolution d'assets de `capture3d`, mais son rendu GPU n'est pas une sortie déterministe : les captures reproductibles restent produites par le chemin CPU.
+
+`gltf-import` convertit un fichier glTF ou GLB vers `aetherion.scene3d/v1`. Les positions sont quantifiées au millième, les transformations de nœuds sont composées puis cuites dans les vertices, les primitives non triangulées sont refusées et les matériaux utilisent leur couleur PBR de base. Les textures, skins et animations ne sont pas encore importés. La sortie est canonique et publiée atomiquement ; la commande nécessite `--features gltf-import`.
 
 ### Ressources 3D externes M4-F
 

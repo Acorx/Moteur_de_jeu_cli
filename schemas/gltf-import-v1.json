@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/gltf-import-v1.json",
+  "title": "Aetherion glTF import report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "meshes", "materials", "objects", "triangles", "unit_scale", "textures_ignored"],
+  "properties": {
+    "schema": { "const": "aetherion.gltf-import/v1" },
+    "status": { "const": "imported" },
+    "meshes": { "type": "integer", "minimum": 0 },
+    "materials": { "type": "integer", "minimum": 0 },
+    "objects": { "type": "integer", "minimum": 0 },
+    "triangles": { "type": "integer", "minimum": 0 },
+    "unit_scale": { "const": 1000 },
+    "textures_ignored": { "const": true }
+  }
+}
