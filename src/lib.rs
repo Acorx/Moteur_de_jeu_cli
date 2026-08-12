@@ -97,6 +97,13 @@ pub enum Command {
         assets: Option<PathBuf>,
         frames: Option<u64>,
     },
+    GpuBenchmark {
+        scene: PathBuf,
+        width: u32,
+        height: u32,
+        assets: Option<PathBuf>,
+        frames: u64,
+    },
     GltfImport {
         input: PathBuf,
         output: PathBuf,
@@ -653,6 +660,15 @@ impl Command {
                 assets,
                 frames,
             }),
+            "gpu-benchmark" => Ok(Self::GpuBenchmark {
+                scene: scene
+                    .map(PathBuf::from)
+                    .ok_or("gpu-benchmark requiert --scene")?,
+                width: width.unwrap_or(1280),
+                height: height.unwrap_or(720),
+                assets,
+                frames: frames.ok_or("gpu-benchmark requiert --frames")?,
+            }),
             "asset3d-import" => Ok(Self::Asset3dImport {
                 input: input.ok_or("asset3d-import requiert --input")?,
                 kind: asset3d_type.ok_or("asset3d-import requiert --type")?,
@@ -925,7 +941,7 @@ fn parse_percent_option(value: &str, option: &str) -> Result<u64> {
 }
 
 pub fn help() -> &'static str {
-    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  gpu-demo       Ouvre une scÃƒÂ¨ne 3D temps rÃƒÂ©el via wgpu\n  gltf-import    Convertit un fichier glTF/GLB en Scene3d canonique\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte, exécute ou liste les plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM11 GPU:\n  gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] [--frames N] (requiert --features render-gpu)\n\nM12 glTF:\n  gltf-import --input FILE --output FILE (requiert --features gltf-import)\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
+    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  gpu-demo       Ouvre une scÃƒÂ¨ne 3D temps rÃƒÂ©el via wgpu\n  gpu-benchmark  Mesure le rendu GPU sur un nombre de frames borné\n  gltf-import    Convertit un fichier glTF/GLB en Scene3d canonique\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte, exécute ou liste les plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM11 GPU:\n  gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] [--frames N] (requiert --features render-gpu)\n  gpu-benchmark --scene FILE --frames N [--assets FILE] [--width N] [--height N] (requiert --features render-gpu)\n\nM12 glTF:\n  gltf-import --input FILE --output FILE (requiert --features gltf-import)\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
 }
 
 pub fn execute(command: Command) -> Result<Option<String>> {
@@ -1073,6 +1089,18 @@ pub fn execute(command: Command) -> Result<Option<String>> {
             let summary = gpu3d::run(&scene, assets.as_deref(), width, height, frames)?;
             Ok(Some(serde_json::to_string_pretty(&summary).map_err(
                 |error| format!("render_gpu_report_serialize: {error}"),
+            )?))
+        }
+        Command::GpuBenchmark {
+            scene,
+            width,
+            height,
+            assets,
+            frames,
+        } => {
+            let summary = gpu3d::benchmark(&scene, assets.as_deref(), width, height, frames)?;
+            Ok(Some(serde_json::to_string_pretty(&summary).map_err(
+                |error| format!("render_gpu_benchmark_report_serialize: {error}"),
             )?))
         }
         Command::GltfImport { input, output } => {
@@ -1389,6 +1417,22 @@ mod tests {
                 height: 1080,
                 assets: Some(PathBuf::from("assets.json")),
                 frames: Some(120),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_gpu_benchmark_with_required_frame_count() {
+        let args =
+            ["gpu-benchmark", "--scene", "scene.json", "--frames", "240"].map(str::to_string);
+        assert_eq!(
+            Command::parse(&args).unwrap(),
+            Command::GpuBenchmark {
+                scene: PathBuf::from("scene.json"),
+                width: 1280,
+                height: 720,
+                assets: None,
+                frames: 240,
             }
         );
     }

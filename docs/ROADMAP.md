@@ -102,21 +102,23 @@ Chaque sous-système doit publier ses quotas, formats et tests de déterminisme.
 
 ## M11 — Premier pipeline GPU temps réel (tranche 1 présente)
 
-**Présent et couvert :** feature Cargo `render-gpu` optionnelle avec `wgpu 0.19`, `winit 0.29`, `glam`, `bytemuck` et `pollster`. La commande `gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] [--frames N]` charge une `Scene3d` validée, résout les assets existants et ouvre une fenêtre temps réel. `--frames` borne l'exécution et publie le rapport versionné `aetherion.gpu-demo/v1`, ce qui fournit un point d'intégration pour les smoke tests et benchmarks.
+**Présent et couvert :** feature Cargo `render-gpu` optionnelle avec `wgpu 0.19`, `winit 0.29`, `glam`, `bytemuck` et `pollster`. La commande `gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] [--frames N]` charge une `Scene3d` validée, résout les assets existants et ouvre une fenêtre temps réel. `--frames` borne l'exécution et publie le rapport versionné `aetherion.gpu-demo/v1`. La commande `gpu-benchmark --scene FILE --frames N` réutilise cette boucle et publie `aetherion.gpu-benchmark/v1` avec adaptateur, temps mural et FPS millième.
 
-Le pipeline sélectionne l'adaptateur compatible, configure la surface en sRGB avec présentation FIFO lorsque disponible, crée un pipeline de triangles colorés, calcule une normale de face et un éclairage directionnel/ambiant simple, utilise une caméra orthographique dérivée de `Camera3d`, un depth buffer `Depth24Plus`, et gère redimensionnement/perte de surface/épuisement mémoire. Les sommets GPU sont des copies `f32` d'un snapshot de scène ; le renderer ne possède aucun accès mutable à la simulation.
+Le pipeline sélectionne l'adaptateur compatible, configure la surface en sRGB avec présentation FIFO lorsque disponible, crée un pipeline de triangles colorés, consomme les normales/UV optionnels des meshes avec fallback flat-shading, et applique un éclairage directionnel/ambiant simple. Il utilise une caméra orthographique dérivée de `Camera3d`, un depth buffer `Depth24Plus`, et gère redimensionnement/perte de surface/épuisement mémoire. Les sommets GPU sont des copies `f32` d'un snapshot de scène ; le renderer ne possède aucun accès mutable à la simulation.
 
 Le chemin headless par défaut reste compilable et exécutable sans dépendances GPU. Le rendu GPU n'est pas déterministe bit-à-bit et ne remplace ni `capture3d`, ni les captures CPU, ni les visual diffs. L'ADR [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md) fixe cette frontière.
 
-**Critères restant pour clôturer M11 :** scène de benchmark versionnée, mesure FPS/temps CPU/GPU, capture de référence contrôlée et validation sur Windows/Linux/macOS avec au moins un backend logiciel CI.
+**Critères restant pour clôturer M11 :** paliers de géométrie versionnés, mesure GPU timestamp/temps CPU lorsque les fonctionnalités du pilote le permettent, capture de référence contrôlée et validation sur Windows/Linux/macOS avec au moins un backend logiciel CI. La commande et le rapport de benchmark sont présents ; la validation multi-adaptateurs reste à exécuter dans CI et sur matériel représentatif.
 
 ## M12 — Assets glTF (tranche 1 présente)
 
 **Présent et couvert :** feature `gltf-import` optionnelle, commande `gltf-import --input FILE --output FILE`, support glTF/GLB, selection de la scene par defaut, traversal hierarchique des noeuds, composition des transformations, import des positions et indices de primitives triangulees, conversion des couleurs PBR de base et publication canonique `aetherion.scene3d/v1`.
 
-Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validation des nombres, overflow de quantification, primitives non triangulees, indices hors limites et sorties existantes sont refuses avec des erreurs stables. Les images ne sont pas decodees dans cette tranche. Les textures, skins, morph targets, normales, UV, animations et materiaux textures restent explicitement futures. `render-gpu` active automatiquement cette tranche afin qu'un fichier importe puisse etre affiche par `gpu-demo`.
+Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validation des nombres, overflow de quantification, primitives non triangulees, indices hors limites et sorties existantes sont refuses avec des erreurs stables. Les images ne sont pas decodees dans cette tranche. Les textures, skins, morph targets et animations glTF restent explicitement futures. `render-gpu` active automatiquement cette tranche afin qu'un fichier importe puisse etre affiche par `gpu-demo`.
 
-**Prochaines tranches M12 :** conserver normales/UV dans un format de mesh v2 retrocompatible, cache d'assets par checksum, chargement asynchrone et materiaux textures avec quotas.
+**M12.3 présente :** les meshes conservent des normales optionnelles quantifiées à `1_000_000` et des UV optionnels quantifiés à `1_000_000`. Les longueurs sont vérifiées, les normales nulles sont refusées, les scènes sans attributs restent compatibles et le chemin CPU historique n'est pas modifié.
+
+**Prochaines tranches M12 :** cache d'assets par checksum, chargement asynchrone et matériaux textures avec quotas.
 
 ## M8 — Tooling, build et packaging (futur)
 

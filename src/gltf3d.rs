@@ -37,7 +37,10 @@ mod runtime {
         REPORT_SCHEMA,
     };
     use crate::Result;
-    use crate::render3d::{self, Material3d, Mesh3d, Object3d, SCENE_SCHEMA, Scene3d, Transform3d};
+    use crate::render3d::{
+        self, Material3d, Mesh3d, NORMAL_SCALE, Object3d, SCENE_SCHEMA, Scene3d, Transform3d,
+        UV_SCALE,
+    };
 
     struct ImportContext {
         buffers: Vec<gltf::buffer::Data>,
@@ -140,6 +143,31 @@ mod runtime {
                     .read_positions()
                     .ok_or("gltf_import_positions_missing")?
                     .collect();
+                let normals = reader
+                    .read_normals()
+                    .map(|values| {
+                        values
+                            .map(|normal| transform_normal(transform, normal))
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                if !normals.is_empty() && normals.len() != positions.len() {
+                    return Err("gltf_import_normals_length_invalid".into());
+                }
+                let uvs = reader
+                    .read_tex_coords(0)
+                    .map(|values| {
+                        values
+                            .into_f32()
+                            .map(|uv| Ok([quantize_uv(uv[0])?, quantize_uv(uv[1])?]))
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                if !uvs.is_empty() && uvs.len() != positions.len() {
+                    return Err("gltf_import_uvs_length_invalid".into());
+                }
                 let indices: Vec<u32> = reader
                     .read_indices()
                     .map(|indices| indices.into_u32().collect())
@@ -171,6 +199,8 @@ mod runtime {
                     id: mesh_id.clone(),
                     vertices,
                     triangles,
+                    normals,
+                    uvs,
                 });
                 context.objects.push(Object3d {
                     id: object_id,
@@ -199,20 +229,50 @@ mod runtime {
         })
     }
 
-    fn quantize(value: f32) -> Result<i32> {
+    fn transform_normal(transform: Mat4, normal: [f32; 3]) -> Result<[i32; 3]> {
+        if normal.iter().any(|value| !value.is_finite()) {
+            return Err("gltf_import_normal_invalid".into());
+        }
+        let inverse_transpose = transform.inverse().transpose();
+        let value = inverse_transpose * Vec4::new(normal[0], normal[1], normal[2], 0.0);
+        let length = value.truncate().length();
+        if !length.is_finite() || length <= f32::EPSILON {
+            return Err("gltf_import_normal_transform_invalid".into());
+        }
+        let normalized = value.truncate() / length;
+        Ok([
+            quantize_normal(normalized.x)?,
+            quantize_normal(normalized.y)?,
+            quantize_normal(normalized.z)?,
+        ])
+    }
+
+    fn quantize_normal(value: f32) -> Result<i32> {
+        quantize_scaled(value, NORMAL_SCALE, "gltf_import_normal_overflow")
+    }
+
+    fn quantize_uv(value: f32) -> Result<i32> {
+        quantize_scaled(value, UV_SCALE, "gltf_import_uv_overflow")
+    }
+
+    fn quantize_scaled(value: f32, scale: i32, overflow: &'static str) -> Result<i32> {
         if !value.is_finite() {
             return Err("gltf_import_number_invalid".into());
         }
-        let scaled = f64::from(value) * f64::from(GLTF_UNIT_SCALE);
+        let scaled = f64::from(value) * f64::from(scale);
         let rounded = if scaled >= 0.0 {
             (scaled + 0.5).floor()
         } else {
             (scaled - 0.5).ceil()
         };
         if rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
-            return Err("gltf_import_coordinate_overflow".into());
+            return Err(overflow.into());
         }
         Ok(rounded as i32)
+    }
+
+    fn quantize(value: f32) -> Result<i32> {
+        quantize_scaled(value, GLTF_UNIT_SCALE, "gltf_import_coordinate_overflow")
     }
 
     fn material_id(context: &mut ImportContext, material: gltf::Material<'_>) -> Result<String> {

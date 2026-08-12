@@ -51,3 +51,37 @@ fn imports_triangle_nodes_materials_and_publishes_canonical_scene() {
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn imports_optional_normals_and_uvs_with_stable_quantization() {
+    let directory = temporary_directory();
+    fs::create_dir_all(&directory).unwrap();
+    let input = directory.join("triangle.gltf");
+    let output = directory.join("scene.json");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle_normals_uv.gltf"),
+        &input,
+    )
+    .unwrap();
+
+    gltf3d::import(&input, &output).unwrap();
+    let scene = render3d::load(&output).unwrap();
+    assert_eq!(
+        scene.meshes[0].normals,
+        vec![[0, 0, render3d::NORMAL_SCALE]; 3]
+    );
+    assert_eq!(
+        scene.meshes[0].uvs,
+        vec![[0, 0], [render3d::UV_SCALE, 0], [0, render3d::UV_SCALE]]
+    );
+    assert_eq!(
+        render3d::expanded_mesh_triangles(&scene).unwrap()[0].normals,
+        Some([[0, 0, render3d::NORMAL_SCALE]; 3])
+    );
+
+    let first = fs::read(&output).unwrap();
+    fs::remove_file(&output).unwrap();
+    gltf3d::import(&input, &output).unwrap();
+    assert_eq!(first, fs::read(&output).unwrap());
+    fs::remove_dir_all(directory).unwrap();
+}

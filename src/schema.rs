@@ -48,6 +48,10 @@ pub const SCHEMAS: &[(&str, &str)] = &[
         include_str!("../schemas/gltf-import-v1.json"),
     ),
     ("gpu-demo", include_str!("../schemas/gpu-demo-v1.json")),
+    (
+        "gpu-benchmark",
+        include_str!("../schemas/gpu-benchmark-v1.json"),
+    ),
     ("assets3d", include_str!("../schemas/assets3d-v1.json")),
     ("capture3d", include_str!("../schemas/capture3d-v1.json")),
     (

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/gpu-benchmark-v1.json",
+  "title": "Aetherion GPU benchmark report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "width", "height", "frames_rendered", "triangles", "elapsed_ms", "fps_milli", "adapter"],
+  "properties": {
+    "schema": { "const": "aetherion.gpu-benchmark/v1" },
+    "status": { "const": "completed" },
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "frames_rendered": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "triangles": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "elapsed_ms": { "type": "integer", "minimum": 0 },
+    "fps_milli": { "type": "integer", "minimum": 0 },
+    "adapter": { "type": "string", "minLength": 1, "maxLength": 256 }
+  }
+}

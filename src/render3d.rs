@@ -16,6 +16,10 @@ pub const MAX_OBJECTS: usize = 100_000;
 pub const MAX_ANIMATIONS: usize = 10_000;
 pub const MAX_TRACKS: usize = 100_000;
 pub const MAX_KEYFRAMES: usize = 1_000_000;
+/// Quantization used for imported unit normals in the versioned scene format.
+pub const NORMAL_SCALE: i32 = 1_000_000;
+/// Quantization used for imported texture coordinates in the versioned scene format.
+pub const UV_SCALE: i32 = 1_000_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -89,6 +93,14 @@ pub struct Mesh3d {
     pub vertices: Vec<Vertex3>,
     #[serde(default)]
     pub triangles: Vec<[u32; 3]>,
+    /// Optional per-vertex normals quantized with [`NORMAL_SCALE`].
+    /// An empty vector keeps compatibility with legacy flat-shaded meshes.
+    #[serde(default)]
+    pub normals: Vec<[i32; 3]>,
+    /// Optional per-vertex UV coordinates quantized with [`UV_SCALE`].
+    /// An empty vector means that the mesh has no texture coordinates.
+    #[serde(default)]
+    pub uvs: Vec<[i32; 2]>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -259,7 +271,7 @@ pub fn validate(scene: &Scene3d) -> Result<()> {
         return Err("scene3d_resource_quota".into());
     }
     validate_animations(scene)?;
-    let expanded = expand_triangles(scene)?;
+    let expanded = expanded_triangles(scene)?;
     if expanded.len() > MAX_TRIANGLES || expanded.len().saturating_mul(3) > MAX_VERTICES {
         return Err("scene3d_triangle_quota: plafond 100000".into());
     }
@@ -338,10 +350,25 @@ fn safe_id(id: &str) -> bool {
 }
 
 pub fn expanded_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
-    expand_triangles(scene)
+    Ok(expanded_mesh_triangles(scene)?
+        .into_iter()
+        .map(|expanded| expanded.triangle)
+        .collect())
 }
 
-fn expand_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
+/// Presentation-only expansion retaining mesh attributes which are not part of
+/// the deterministic CPU triangle contract. The CPU renderer intentionally
+/// consumes [`expanded_triangles`] so these optional attributes cannot alter
+/// captures, checksums, or replays.
+#[derive(Clone, Debug)]
+pub struct ExpandedMeshTriangle3d {
+    pub triangle: Triangle,
+    pub normals: Option<[[i32; 3]; 3]>,
+    pub uvs: Option<[[i32; 2]; 3]>,
+    pub transform: Transform3d,
+}
+
+pub fn expanded_mesh_triangles(scene: &Scene3d) -> Result<Vec<ExpandedMeshTriangle3d>> {
     use std::collections::{BTreeMap, BTreeSet};
     let mut mesh_ids = BTreeSet::new();
     let mut meshes = BTreeMap::new();
@@ -352,6 +379,7 @@ fn expand_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
         if mesh.vertices.len() > MAX_VERTICES || mesh.triangles.len() > MAX_TRIANGLES {
             return Err("scene3d_mesh_quota".into());
         }
+        validate_mesh_attributes(mesh)?;
         for face in &mesh.triangles {
             if face
                 .iter()
@@ -374,7 +402,17 @@ fn expand_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
         materials.insert(material.id.as_str(), material);
     }
     let mut object_ids = BTreeSet::new();
-    let mut result = scene.triangles.clone();
+    let mut result = scene
+        .triangles
+        .iter()
+        .cloned()
+        .map(|triangle| ExpandedMeshTriangle3d {
+            triangle,
+            normals: None,
+            uvs: None,
+            transform: Transform3d::default(),
+        })
+        .collect::<Vec<_>>();
     for object in &scene.objects {
         if !safe_id(&object.id) || !object_ids.insert(object.id.as_str()) {
             return Err("scene3d_object_id_invalid".into());
@@ -408,10 +446,18 @@ fn expand_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
                     / 1000) as u8;
             }
             let id = u32::try_from(result.len()).map_err(|_| "scene3d_triangle_quota")?;
-            result.push(Triangle {
-                id: id.checked_add(1).ok_or("scene3d_triangle_quota")?,
-                vertices,
-                color,
+            let normals =
+                (!mesh.normals.is_empty()).then(|| face.map(|index| mesh.normals[index as usize]));
+            let uvs = (!mesh.uvs.is_empty()).then(|| face.map(|index| mesh.uvs[index as usize]));
+            result.push(ExpandedMeshTriangle3d {
+                triangle: Triangle {
+                    id: id.checked_add(1).ok_or("scene3d_triangle_quota")?,
+                    vertices,
+                    color,
+                },
+                normals,
+                uvs,
+                transform: object.transform,
             });
             if result.len() > MAX_TRIANGLES {
                 return Err("scene3d_triangle_quota: plafond 100000".into());
@@ -419,6 +465,25 @@ fn expand_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
         }
     }
     Ok(result)
+}
+
+fn validate_mesh_attributes(mesh: &Mesh3d) -> Result<()> {
+    if !mesh.normals.is_empty() && mesh.normals.len() != mesh.vertices.len() {
+        return Err("scene3d_mesh_normals_length_invalid".into());
+    }
+    if !mesh.uvs.is_empty() && mesh.uvs.len() != mesh.vertices.len() {
+        return Err("scene3d_mesh_uvs_length_invalid".into());
+    }
+    if mesh.normals.iter().any(|normal| {
+        let length_squared = normal
+            .iter()
+            .map(|component| i128::from(*component) * i128::from(*component))
+            .sum::<i128>();
+        length_squared == 0
+    }) {
+        return Err("scene3d_mesh_normal_invalid".into());
+    }
+    Ok(())
 }
 
 fn transform_vertex(vertex: Vertex3, transform: Transform3d) -> Result<Vertex3> {
@@ -614,7 +679,7 @@ fn render_buffers(
     }
     let mut depth = vec![i64::MAX; pixel_count];
     let mut owner = vec![u32::MAX; pixel_count];
-    let mut triangles = expand_triangles(scene)?;
+    let mut triangles = expanded_triangles(scene)?;
     triangles.sort_by_key(|triangle| triangle.id);
     for triangle in &triangles {
         rasterize(&mut image, &mut depth, &mut owner, triangle, scene.camera)?;
@@ -826,6 +891,8 @@ mod tests {
                     Vertex3 { x: 1, y: 3, z: 3 },
                 ],
                 triangles: vec![[0, 1, 2]],
+                normals: Vec::new(),
+                uvs: Vec::new(),
             }],
             materials: vec![Material3d {
                 id: "material".into(),
@@ -870,13 +937,56 @@ mod tests {
 
     #[test]
     fn meshes_and_materials_are_reusable_and_opacity_is_integer_deterministic() {
-        let expanded = expand_triangles(&resource_scene(vec![object("a"), object("b")])).unwrap();
+        let expanded = expanded_triangles(&resource_scene(vec![object("a"), object("b")])).unwrap();
         assert_eq!(expanded.len(), 2);
         for (left, right) in expanded[0].vertices.iter().zip(expanded[1].vertices) {
             assert_eq!([left.x, left.y, left.z], [right.x, right.y, right.z]);
         }
         assert_eq!(expanded[0].color, [101, 51, 27]);
         assert_eq!(expanded[0].color, expanded[1].color);
+    }
+
+    #[test]
+    fn mesh_attributes_are_optional_but_length_checked() {
+        let mut scene = resource_scene(vec![object("object")]);
+        scene.meshes[0].normals = vec![[0, 0, NORMAL_SCALE]; 2];
+        assert!(
+            validate(&scene)
+                .unwrap_err()
+                .to_string()
+                .contains("normals_length")
+        );
+        scene.meshes[0].normals = vec![[0, 0, NORMAL_SCALE]; 3];
+        scene.meshes[0].uvs = vec![[0, 0], [UV_SCALE, 0], [0, UV_SCALE]];
+        validate(&scene).unwrap();
+        let expanded = expanded_mesh_triangles(&scene).unwrap();
+        assert_eq!(expanded[0].normals, Some([[0, 0, NORMAL_SCALE]; 3]));
+        assert_eq!(
+            expanded[0].uvs,
+            Some([[0, 0], [UV_SCALE, 0], [0, UV_SCALE]])
+        );
+    }
+
+    #[test]
+    fn legacy_mesh_without_attributes_keeps_flat_fallback() {
+        let expanded = expanded_mesh_triangles(&resource_scene(vec![object("object")])).unwrap();
+        assert_eq!(expanded[0].normals, None);
+        assert_eq!(expanded[0].uvs, None);
+        assert_eq!(
+            expanded_triangles(&resource_scene(vec![object("object")]))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn mesh_attributes_have_stable_json_representation() {
+        let scene = resource_scene(vec![object("object")]);
+        let first = serde_json::to_vec(&scene).unwrap();
+        let second =
+            serde_json::to_vec(&serde_json::from_slice::<Scene3d>(&first).unwrap()).unwrap();
+        assert_eq!(first, second);
     }
 
     #[test]

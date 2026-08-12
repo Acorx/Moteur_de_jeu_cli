@@ -15,12 +15,28 @@ pub struct RunSummary {
     pub triangles: usize,
 }
 
+pub const BENCHMARK_REPORT_SCHEMA: &str = "aetherion.gpu-benchmark/v1";
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BenchmarkSummary {
+    pub schema: &'static str,
+    pub status: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub frames_rendered: u64,
+    pub triangles: usize,
+    pub elapsed_ms: u64,
+    pub fps_milli: u64,
+    pub adapter: String,
+}
+
 #[cfg(feature = "render-gpu")]
 mod runtime {
     use std::mem::size_of;
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
 
     use bytemuck::{Pod, Zeroable};
     use glam::{Mat4, Vec3};
@@ -31,8 +47,8 @@ mod runtime {
     use winit::window::{Window, WindowBuilder};
 
     use crate::Result;
-    use crate::gpu3d::RunSummary;
-    use crate::render3d::{self, Camera3d, Scene3d};
+    use crate::gpu3d::{BenchmarkSummary, RunSummary};
+    use crate::render3d::{self, Camera3d, NORMAL_SCALE, Scene3d, Transform3d, UV_SCALE};
 
     const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
     const MIN_DEPTH: f32 = 0.1;
@@ -44,6 +60,7 @@ mod runtime {
         position: [f32; 3],
         color: [f32; 3],
         normal: [f32; 3],
+        uv: [f32; 2],
     }
 
     impl Vertex {
@@ -66,6 +83,11 @@ mod runtime {
                         offset: size_of::<[f32; 6]>() as wgpu::BufferAddress,
                         shader_location: 2,
                         format: wgpu::VertexFormat::Float32x3,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 9]>() as wgpu::BufferAddress,
+                        shader_location: 3,
+                        format: wgpu::VertexFormat::Float32x2,
                     },
                 ],
             }
@@ -119,6 +141,7 @@ mod runtime {
         camera: Camera3d,
         scene_size: PhysicalSize<u32>,
         background: [f32; 3],
+        adapter: String,
     }
 
     impl Renderer {
@@ -136,6 +159,7 @@ mod runtime {
                 })
                 .await
                 .ok_or("render_gpu_adapter: aucun adaptateur compatible")?;
+            let adapter_name = adapter.get_info().name;
             let (device, queue) = adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
@@ -277,6 +301,7 @@ mod runtime {
                 background: scene
                     .background
                     .map(|channel| f32::from(channel) / f32::from(u8::MAX)),
+                adapter: adapter_name,
             })
         }
 
@@ -364,32 +389,77 @@ mod runtime {
     }
 
     pub(super) fn scene_vertices(scene: &Scene3d) -> Result<(Vec<Vertex>, Vec<u32>)> {
-        let triangles = render3d::expanded_triangles(scene)?;
+        let triangles = render3d::expanded_mesh_triangles(scene)?;
         let mut vertices = Vec::with_capacity(triangles.len() * 3);
         let mut indices = Vec::with_capacity(triangles.len() * 3);
-        for triangle in triangles {
+        for expanded in triangles {
             let base = u32::try_from(vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
-            let color = triangle
+            let color = expanded
+                .triangle
                 .color
                 .map(|channel| f32::from(channel) / f32::from(u8::MAX));
-            let positions = triangle.vertices.map(|vertex| {
+            let positions = expanded.triangle.vertices.map(|vertex| {
                 [
                     vertex.x as f32,
                     vertex.y as f32,
                     -(vertex.z - scene.camera.z) as f32,
                 ]
             });
-            let normal = flat_normal(positions);
-            for position in positions {
+            let flat = flat_normal(positions);
+            for (slot, position) in positions.into_iter().enumerate() {
+                let normal = expanded
+                    .normals
+                    .map(|normals| transformed_normal(normals[slot], expanded.transform))
+                    .unwrap_or(flat);
+                let uv = expanded
+                    .uvs
+                    .map(|uvs| {
+                        [
+                            uvs[slot][0] as f32 / UV_SCALE as f32,
+                            uvs[slot][1] as f32 / UV_SCALE as f32,
+                        ]
+                    })
+                    .unwrap_or([0.0, 0.0]);
                 vertices.push(Vertex {
                     position,
                     color,
                     normal,
+                    uv,
                 });
             }
             indices.extend([base, base + 1, base + 2]);
         }
         Ok((vertices, indices))
+    }
+
+    fn transformed_normal(normal: [i32; 3], transform: Transform3d) -> [f32; 3] {
+        // The presentation camera mirrors Z while keeping triangle winding;
+        // negate X/Y so imported smooth normals agree with the flat fallback.
+        let mut value = Vec3::new(
+            -(normal[0] as f32 / NORMAL_SCALE as f32),
+            -(normal[1] as f32 / NORMAL_SCALE as f32),
+            normal[2] as f32 / NORMAL_SCALE as f32,
+        );
+        for (component, scale) in value.as_mut().iter_mut().zip(transform.scale) {
+            if scale == 0 {
+                return Vec3::Z.to_array();
+            }
+            *component /= scale as f32 / 1000.0;
+        }
+        for axis in 0..3 {
+            for _ in 0..transform.rotation[axis].rem_euclid(360_000) / 90_000 {
+                value = match axis {
+                    0 => Vec3::new(value.x, -value.z, value.y),
+                    1 => Vec3::new(value.z, value.y, -value.x),
+                    _ => Vec3::new(-value.y, value.x, value.z),
+                };
+            }
+        }
+        if value.length_squared() <= f32::EPSILON {
+            Vec3::Z.to_array()
+        } else {
+            value.normalize().to_array()
+        }
     }
 
     fn flat_normal(positions: [[f32; 3]; 3]) -> [f32; 3] {
@@ -418,16 +488,7 @@ mod runtime {
         )
     }
 
-    pub fn run(
-        scene_path: &Path,
-        assets_path: Option<&Path>,
-        width: u32,
-        height: u32,
-        max_frames: Option<u64>,
-    ) -> Result<RunSummary> {
-        if width == 0 || height == 0 {
-            return Err("render_gpu_dimensions_invalid".into());
-        }
+    fn load_scene(scene_path: &Path, assets_path: Option<&Path>) -> Result<Scene3d> {
         let scene = if let Some(assets_path) = assets_path {
             let mut scene = render3d::load_unresolved(scene_path)?;
             render3d::resolve_assets(&mut scene, assets_path)?;
@@ -436,16 +497,81 @@ mod runtime {
             render3d::load(scene_path)?
         };
         render3d::validate(&scene)?;
+        Ok(scene)
+    }
+
+    pub fn run(
+        scene_path: &Path,
+        assets_path: Option<&Path>,
+        width: u32,
+        height: u32,
+        max_frames: Option<u64>,
+    ) -> Result<RunSummary> {
+        run_internal(scene_path, assets_path, width, height, max_frames)
+            .map(|(summary, _, _)| summary)
+    }
+
+    pub fn benchmark(
+        scene_path: &Path,
+        assets_path: Option<&Path>,
+        width: u32,
+        height: u32,
+        frames: u64,
+    ) -> Result<BenchmarkSummary> {
+        if frames == 0 {
+            return Err("render_gpu_benchmark_frames_invalid: minimum 1".into());
+        }
+        let (summary, adapter, elapsed) =
+            run_internal(scene_path, assets_path, width, height, Some(frames))?;
+        let elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+        let fps_milli = if elapsed_ms == 0 {
+            0
+        } else {
+            summary
+                .frames_rendered
+                .saturating_mul(1000)
+                .saturating_mul(1000)
+                .checked_div(elapsed_ms)
+                .unwrap_or(0)
+        };
+        Ok(BenchmarkSummary {
+            schema: super::BENCHMARK_REPORT_SCHEMA,
+            status: "completed",
+            width: summary.width,
+            height: summary.height,
+            frames_rendered: summary.frames_rendered,
+            triangles: summary.triangles,
+            elapsed_ms,
+            fps_milli,
+            adapter,
+        })
+    }
+
+    fn run_internal(
+        scene_path: &Path,
+        assets_path: Option<&Path>,
+        width: u32,
+        height: u32,
+        max_frames: Option<u64>,
+    ) -> Result<(RunSummary, String, std::time::Duration)> {
+        if width == 0 || height == 0 {
+            return Err("render_gpu_dimensions_invalid".into());
+        }
+        let scene = load_scene(scene_path, assets_path)?;
         let triangle_count = render3d::expanded_triangles(&scene)?.len();
         if max_frames == Some(0) {
-            return Ok(RunSummary {
-                schema: super::REPORT_SCHEMA,
-                status: "completed",
-                width,
-                height,
-                frames_rendered: 0,
-                triangles: triangle_count,
-            });
+            return Ok((
+                RunSummary {
+                    schema: super::REPORT_SCHEMA,
+                    status: "completed",
+                    width,
+                    height,
+                    frames_rendered: 0,
+                    triangles: triangle_count,
+                },
+                "not-started".into(),
+                std::time::Duration::ZERO,
+            ));
         }
         if max_frames.is_some_and(|frames| frames > 1_000_000) {
             return Err("render_gpu_frames_quota: plafond 1000000".into());
@@ -460,6 +586,8 @@ mod runtime {
                 .map_err(|error| format!("render_gpu_window: {error}"))?,
         );
         let mut renderer = pollster::block_on(Renderer::new(&window, &scene))?;
+        let adapter = renderer.adapter.clone();
+        let started = Instant::now();
         let frames_rendered = Arc::new(AtomicU64::new(0));
         let frames_for_loop = Arc::clone(&frames_rendered);
         event_loop
@@ -488,14 +616,18 @@ mod runtime {
                 _ => {}
             })
             .map_err(|error| format!("render_gpu_event_loop: {error}"))?;
-        Ok(RunSummary {
-            schema: super::REPORT_SCHEMA,
-            status: "completed",
-            width,
-            height,
-            frames_rendered: frames_rendered.load(Ordering::Relaxed),
-            triangles: triangle_count,
-        })
+        Ok((
+            RunSummary {
+                schema: super::REPORT_SCHEMA,
+                status: "completed",
+                width,
+                height,
+                frames_rendered: frames_rendered.load(Ordering::Relaxed),
+                triangles: triangle_count,
+            },
+            adapter,
+            started.elapsed(),
+        ))
     }
 
     const SHADER: &str = r#"
@@ -510,12 +642,14 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
     @location(2) normal: vec3<f32>,
+    @location(3) uv: vec2<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
 };
 
 @vertex
@@ -524,6 +658,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.position = camera.view_projection * vec4<f32>(input.position, 1.0);
     output.color = input.color;
     output.normal = input.normal;
+    output.uv = input.uv;
     return output;
 }
 
@@ -548,6 +683,17 @@ pub fn run(
     runtime::run(scene, assets, width, height, max_frames)
 }
 
+#[cfg(feature = "render-gpu")]
+pub fn benchmark(
+    scene: &Path,
+    assets: Option<&Path>,
+    width: u32,
+    height: u32,
+    frames: u64,
+) -> Result<BenchmarkSummary> {
+    runtime::benchmark(scene, assets, width, height, frames)
+}
+
 #[cfg(not(feature = "render-gpu"))]
 pub fn run(
     _scene: &Path,
@@ -556,6 +702,17 @@ pub fn run(
     _height: u32,
     _max_frames: Option<u64>,
 ) -> Result<RunSummary> {
+    Err("render_gpu_feature_disabled: compilez avec --features render-gpu".into())
+}
+
+#[cfg(not(feature = "render-gpu"))]
+pub fn benchmark(
+    _scene: &Path,
+    _assets: Option<&Path>,
+    _width: u32,
+    _height: u32,
+    _frames: u64,
+) -> Result<BenchmarkSummary> {
     Err("render_gpu_feature_disabled: compilez avec --features render-gpu".into())
 }
 
