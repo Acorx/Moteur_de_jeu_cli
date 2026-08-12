@@ -61,7 +61,7 @@ Scénarios JSON v1, événements déterministes réutilisés, assertions par tic
 
 **M5-B présent et couvert :** `plugin resolve` publie atomiquement le lockfile versionné `aetherion.plugin-lock/v1`, canoniquement trié par identifiant, avec chemins relatifs, ABI, capacités, version et checksum FNV-1a. `plugin lock-check` recalcule ces données et retourne le code 1 avec rapport JSON en cas de divergence. Le test d'intégration `tests/plugin_lock.rs` vérifie la stabilité, l'acceptation et la détection d'une modification de checksum.
 
-Cette tranche reste **manifest-only** pour les commandes de catalogue : aucun plugin ne peut encore être lancé depuis la CLI.
+Cette tranche reste **manifest-only** pour les commandes de catalogue : l'exécution passe désormais par `plugin run`, tandis que l'audit de provenance passe par `plugin audit`.
 
 **M5-C0 présent et couvert :** la feature optionnelle `plugin-runtime` embarque `wasmi 0.32.3`, instancie un module avec un linker vide et appelle `aetherion_main: () -> i32`. Le build par défaut reste sans runtime WebAssembly; les modules invalides, exports absents et traps produisent des erreurs `plugin_runtime_*` stables.
 
@@ -71,11 +71,15 @@ Cette tranche reste **manifest-only** pour les commandes de catalogue : aucun pl
 
 **M5-C3 présent et couvert :** les quotas `io_read_bytes` et `files` sont appliqués aux imports d'assets avant et pendant l'exécution. Les dépassements produisent `plugin_runtime_io_read_quota` ou `plugin_runtime_files_quota`; `ExecutionReport.io` publie les compteurs déterministes. Aucun import d'écriture n'est exposé, donc `io_write_bytes` reste nul par construction. Les tests couvrent quota autorisé, dépassement de lecture et dépassement de fichiers.
 
+**M5-C4 présent et couvert :** le runtime inspecte chaque import avant instanciation et refuse explicitement WASI, sockets, réseau, HTTP, TCP, UDP et DNS avec `plugin_runtime_network_denied`. Aucun linker, import ou capability réseau n'est enregistré; les tests couvrent modules WASI, `wasi:io`, socket et réseau explicites.
+
+**M5-C5 présent et couvert :** `plugin run --manifest FILE --module FILE` exécute un module borné avec `--export`, vues optionnelles de projet/scène/assets, `--dry-run` et rapport atomique `aetherion.plugin-run-report/v1`. Le build sans `plugin-runtime` conserve une erreur stable `plugin_runtime_feature_disabled`; les rapports n'embarquent aucun chemin machine.
+
+**M5-C6 présent et couvert :** `plugin audit --manifest FILE --module FILE` valide sans exécution le manifeste, le module, l'export et les imports autorisés, puis publie atomiquement `aetherion.plugin-audit/v1`. Le rapport contient les checksums FNV-1a exacts du manifeste et du module, l'identité/version, l'ABI `1.1`, les capacités triées, les quotas et la provenance du runtime `wasmi 0.32.3` avec réseau/WASI désactivés. `signatures.status` est explicitement `not_implemented` jusqu'à la tranche cryptographique dédiée. Des golden tests couvrent dry-run, exécution, télémétrie/IO et audit; un corpus borné couvre les modules vides/invalides, exports/signatures, imports inconnus/réseau, capacités, doublons et quotas frontières.
+
 **Étapes futures mesurables :**
 
-1. C4 : verrouiller l'interdiction réseau ;
-2. C5 : ajouter `plugin run`, dry-run et rapport atomique ;
-3. C6 : golden tests, fuzzing des frontières, provenance, signatures et audit supply-chain.
+1. C7 : signatures cryptographiques hors ligne, vérification de clés de confiance, révocation et SBOM sans modifier les contrats C5/C6.
 
 ## M6 — Scripting déterministe (tranches A/B présentes)
 
@@ -95,6 +99,16 @@ Ce n'est pas une VM ni un langage de scripting général : aucun script ne parti
 - rendu : matériaux, éclairage et pipelines plus riches derrière interfaces stables, sans faire dépendre la simulation du GPU.
 
 Chaque sous-système doit publier ses quotas, formats et tests de déterminisme. Il n'existe aujourd'hui ni physique avancée/3D ni audio généralistes, ni rendu AAA.
+
+## M11 — Premier pipeline GPU temps réel (tranche 1 présente)
+
+**Présent et couvert :** feature Cargo `render-gpu` optionnelle avec `wgpu 0.19`, `winit 0.29`, `glam`, `bytemuck` et `pollster`. La commande `gpu-demo --scene FILE [--assets FILE] [--width N] [--height N]` charge une `Scene3d` validée, résout les assets existants et ouvre une fenêtre temps réel.
+
+Le pipeline sélectionne l'adaptateur compatible, configure la surface en sRGB avec présentation FIFO lorsque disponible, crée un pipeline de triangles colorés, une caméra orthographique dérivée de `Camera3d`, un depth buffer `Depth24Plus`, et gère redimensionnement/perte de surface/épuisement mémoire. Les sommets GPU sont des copies `f32` d'un snapshot de scène ; le renderer ne possède aucun accès mutable à la simulation.
+
+Le chemin headless par défaut reste compilable et exécutable sans dépendances GPU. Le rendu GPU n'est pas déterministe bit-à-bit et ne remplace ni `capture3d`, ni les captures CPU, ni les visual diffs. L'ADR [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md) fixe cette frontière.
+
+**Critères restant pour clôturer M11 :** scène de benchmark versionnée, mesure FPS/temps CPU/GPU, capture de référence contrôlée et validation sur Windows/Linux/macOS avec au moins un backend logiciel CI.
 
 ## M8 — Tooling, build et packaging (futur)
 

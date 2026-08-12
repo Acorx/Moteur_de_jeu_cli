@@ -2,7 +2,7 @@
 
 ## État présent
 
-Aetherion accepte des **manifestes de plugins** et fournit un runtime WebAssembly optionnel derrière `plugin-runtime`. La commande CLI `plugin run` reste réservée à M5-C5; les API C0 à C2 sont actuellement exposées par Rust afin de stabiliser le contrat avant d'ajouter la commande et ses rapports.
+Aetherion accepte des **manifestes de plugins** et fournit un runtime WebAssembly optionnel derrière `plugin-runtime`. Les commandes `plugin run` et `plugin audit` sont disponibles avec cette feature; les rapports et les schémas restent versionnés et déterministes.
 
 Le format strict `aetherion.plugin/v1` est publié par `aetherion schema show plugin`. Un manifeste est limité à 64 Kio. Un catalogue contient au plus 256 fichiers réguliers nommés `*.plugin.json`; les liens symboliques sont refusés. Le résultat est trié par identifiant, indépendamment de l'ordre du système de fichiers.
 
@@ -21,7 +21,7 @@ La consommation de fuel est publiée dans `ExecutionResult` et deux exécutions 
 
 ## M5-C2 — API hôte versionnée et capacités explicites
 
-Le module d'import Wasm est strictement `aetherion_v1`. Il est versionné indépendamment de l'export d'entrée `aetherion_main: () -> i32`. Un import est accepté uniquement si son nom est connu et si la capacité correspondante est déclarée dans le manifeste; les imports `env`, WASI, réseau, système de fichiers ou tout autre module sont refusés avant l'instanciation avec `plugin_runtime_import_denied`. Une capacité absente produit `plugin_runtime_capability_denied`.
+Le module d'import Wasm est strictement `aetherion_v1`. Il est versionné indépendamment de l'export d'entrée `aetherion_main: () -> i32`. Un import est accepté uniquement si son nom est connu et si la capacité correspondante est déclarée dans le manifeste. Les imports WASI, sockets, réseau, HTTP, TCP, UDP ou DNS sont refusés avant l'instanciation avec `plugin_runtime_network_denied`; un autre module système ou inconnu produit `plugin_runtime_import_denied`. Une capacité absente produit `plugin_runtime_capability_denied`.
 
 Imports actuellement publiés :
 
@@ -50,15 +50,62 @@ Les quotas `io_read_bytes`, `io_write_bytes` et `files` sont lus depuis le manif
 
 Les limites maximales restent celles du manifeste : lecture/écriture `0..64 MiB` et `0..1024` fichiers. Les erreurs de quota sont déterministes et testées avec le même module, manifeste et contexte.
 
+## M5-C4 — Interdiction réseau
+
+Le runtime n'enregistre aucun linker réseau et ne fournit aucune capacité réseau dans `Capability`. Avant toute instanciation, chaque import est inspecté; les marqueurs de modules ou fonctions `wasi`, `socket`, `network`, `tcp`, `udp`, `http`, `https` et `dns` sont refusés avec `plugin_runtime_network_denied`. Cette règle couvre notamment `wasi_snapshot_preview1`, `wasi:io`, `env/socket_open` et les modules réseau explicites.
+
+L'interdiction est structurelle : elle ne dépend pas d'un quota, d'un chemin de fichier, du contenu du manifeste ou de l'absence d'appel effectif. Une extension réseau nécessiterait un nouveau contrat d'ABI et une nouvelle capacité versionnée; elle n'est pas implicite dans M5.
+
+## M5-C5 — Commande `plugin run`
+
+Avec `--features plugin-runtime`, un plugin peut être lancé depuis la CLI :
+
+```console
+aetherion plugin run \
+  --manifest plugins/example.plugin.json \
+  --module plugins/example.wasm \
+  --report plugin-report.json
+```
+
+Options :
+
+- `--manifest FILE` et `--module FILE` sont obligatoires ;
+- `--export NAME` sélectionne l'export, `aetherion_main` par défaut ;
+- `--path DIR` expose une copie de lecture du projet ;
+- `--scene ID` expose une scène validée et nécessite `--path` ;
+- `--assets FILE` sélectionne un manifeste d'assets confiné ;
+- `--dry-run` valide le manifeste, compile le module, vérifie l’export/imports et les références sans instancier ni appeler le plugin ;
+- `--report FILE` publie `aetherion.plugin-run-report/v1` atomiquement.
+
+Le rapport ne contient aucun chemin local. En mode dry-run, son statut est `planned`; en exécution, il est `executed` et contient le code retour, le fuel, les compteurs IO et la télémétrie. Sans la feature Cargo, la commande est reconnue mais retourne `plugin_runtime_feature_disabled` sans charger de module.
+
+## M5-C6 — Audit de provenance et corpus de frontières
+
+`plugin audit --manifest FILE --module FILE` valide le manifeste, lit le module sans l'exécuter, vérifie l'export demandé et réutilise le contrôle des imports/capacités du runtime. La commande publie `aetherion.plugin-audit/v1` avec :
+
+- le checksum FNV-1a du manifeste et du module Wasm exacts, sans chemin local ;
+- l'identité/version du plugin, l'ABI hôte `1.1`, les capacités triées et les quotas ;
+- le moteur `wasmi 0.32.3`, avec `network: false` et `wasi: false` ;
+- `signatures.status: "not_implemented"`, contrat explicite avant l'ajout des signatures cryptographiques.
+
+```console
+aetherion plugin audit --manifest plugins/example.plugin.json --module plugins/example.wasm --report plugin-audit.json
+aetherion plugin audit --manifest plugins/example.plugin.json --module plugins/example.wasm --export custom_entry --report plugin-audit.json
+```
+
+L'audit ne modifie pas `aetherion.plugin-lock/v1` : le lockfile M5-B conserve son contrat manifest-only, tandis que le rapport C6 porte la provenance du module associé. Les tests d'intégration gardent des golden reports pour le dry-run, l'exécution, la télémétrie/IO et l'audit, ainsi qu'un corpus borné d'entrées invalides et de quotas.
+
 ## Commandes
 
 ```console
 aetherion plugin validate plugins/example.plugin.json
 aetherion plugin inspect plugins/example.plugin.json
+aetherion plugin run --manifest plugins/example.plugin.json --module plugins/example.wasm --dry-run
+aetherion plugin audit --manifest plugins/example.plugin.json --module plugins/example.wasm
 aetherion plugin list plugins
 ```
 
-`validate` retourne un rapport JSON et le code 0, ou une erreur de validation et le code 2. `inspect` retourne le manifeste validé avec ses capacités en ordre canonique. `list` valide tous les manifestes du dossier, rejette les identifiants dupliqués et émet un catalogue JSON déterministe.
+`validate` retourne un rapport JSON et le code 0, ou une erreur de validation et le code 2. `inspect` retourne le manifeste validé avec ses capacités en ordre canonique. `list` valide tous les manifestes du dossier, rejette les identifiants dupliqués et émet un catalogue JSON déterministe. `audit` retourne le rapport de provenance et le code 0 uniquement après validation complète du module; sans `plugin-runtime`, `run` et `audit` retournent `plugin_runtime_feature_disabled`.
 
 ## Lockfile M5-B
 

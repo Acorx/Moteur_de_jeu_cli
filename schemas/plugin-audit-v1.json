@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/plugin-audit-v1.json",
+  "title": "Aetherion Plugin Audit v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "plugin_id",
+    "plugin_version",
+    "export",
+    "manifest_checksum_fnv1a",
+    "module_checksum_fnv1a",
+    "host_abi",
+    "runtime",
+    "capabilities",
+    "quotas",
+    "signatures"
+  ],
+  "properties": {
+    "schema": { "const": "aetherion.plugin-audit/v1" },
+    "status": { "const": "verified" },
+    "plugin_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "plugin_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "export": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "manifest_checksum_fnv1a": { "type": "integer", "minimum": 0 },
+    "module_checksum_fnv1a": { "type": "integer", "minimum": 0 },
+    "host_abi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "version", "network", "wasi"],
+      "properties": {
+        "engine": { "const": "wasmi" },
+        "version": { "const": "0.32.3" },
+        "network": { "const": false },
+        "wasi": { "const": false }
+      }
+    },
+    "capabilities": { "type": "array" },
+    "quotas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "fuel", "io_read_bytes", "io_write_bytes", "files"],
+      "properties": {
+        "memory_bytes": { "type": "integer", "minimum": 1 },
+        "fuel": { "type": "integer", "minimum": 1 },
+        "io_read_bytes": { "type": "integer", "minimum": 0 },
+        "io_write_bytes": { "type": "integer", "minimum": 0 },
+        "files": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "signatures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "const": "not_implemented" }
+      }
+    }
+  }
+}

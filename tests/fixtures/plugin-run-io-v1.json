@@ -1,0 +1,16 @@
+{
+  "schema": "aetherion.plugin-run-report/v1",
+  "status": "executed",
+  "plugin_id": "org.aetherion.cli-test",
+  "plugin_version": "1.0.0",
+  "export": "aetherion_main",
+  "dry_run": false,
+  "return_code": 7,
+  "fuel_consumed": 3,
+  "io": {
+    "read_bytes": 1,
+    "write_bytes": 0,
+    "files": 1
+  },
+  "telemetry": []
+}

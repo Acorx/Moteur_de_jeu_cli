@@ -17,6 +17,7 @@ cargo run -- capture --path ./demo --ticks 5 --output ./demo/capture.ppm
 cargo run -- capture --path ./demo --ticks 5 --format png --channels color,depth,normals,segmentation --output ./demo/capture.png
 cargo run -- capture-multi --path ./demo --views ./demo/views.json --output-dir ./demo/views-out
 cargo run -- capture3d --scene ./demo/scene3d.json --animation walk --ticks 12 --output ./demo/capture3d.ppm --width 320 --height 240
+cargo run --features render-gpu -- gpu-demo --scene ./demo/scene3d.json --width 1280 --height 720
 cargo run --features display -- play --path ./demo --max-ticks 300
 cargo run -- replay-create --path ./demo --ticks 10 --events ./demo/events.json --checkpoint-interval 4 --output ./demo/demo-v2.replay.json
 cargo run -- replay-run --path ./demo --replay ./demo/demo.replay.json
@@ -31,11 +32,14 @@ cargo run -- plugin inspect ./plugins/example.plugin.json
 cargo run -- plugin list ./plugins
 cargo run -- plugin resolve --dir ./plugins --lockfile ./demo/aetherion.plugin-lock.json
 cargo run -- plugin lock-check --dir ./plugins --lockfile ./demo/aetherion.plugin-lock.json
+cargo run --features plugin-runtime -- plugin audit --manifest ./plugins/example.plugin.json --module ./plugins/example.wasm --report ./demo/plugin-audit.json
 cargo run -- script-run --script ./demo/script.json --dry-run --report ./demo/script-report.json
 cargo run -- bundle --path ./demo --output ./demo/game.bundle.zip
 cargo run -- bundle-inspect --input ./demo/game.bundle.zip
 cargo run -- agent --path ./demo --root . < ./demo/agent-exchange.jsonl
 ```
+
+`plugin audit` nécessite la feature `plugin-runtime`. Il valide le manifeste, le module Wasm, l'export et les imports autorisés, puis publie `aetherion.plugin-audit/v1` avec les checksums FNV-1a, l'ABI, les capacités, les quotas et l'état sandbox réseau/WASI. Le rapport ne contient aucun chemin local. `signatures.status` vaut `not_implemented` tant que la tranche cryptographique n'est pas livrée.
 
 Le scénario `demo/scenario-fail.json` illustre une assertion échouée (code 1). `scenario-run` accepte le schéma strict `aetherion.scenario/v1` : projet/empreinte optionnelle, tick final, événements de replay, assertions à un tick ou finales (`checksum`, position, vélocité, nombre et visibilité), et budgets d'entrée, sortie, ticks, événements et assertions. Le délai est seulement indicatif et n'influence jamais le verdict déterministe. Le rapport `aetherion.scenario-report/v1` est écrit atomiquement ; l'audit `aetherion.audit/v1` est JSON Lines append-only, sans horodatage ni secret, avec un `run_id` déterministe dérivé des empreintes projet/scénario.
 
@@ -46,7 +50,7 @@ Sous Windows, le binaire release se trouve dans `target/release/aetherion.exe`.
 ## MVP actuel
 
 - M2 : protocole local JSONL strict, session isolée, transactions/dry-run, révisions, capacités, quotas, confinement et staging atomique ;
-- M5-C0/C1/C2/C3 : runtime WebAssembly optionnel derrière `plugin-runtime`, fuel/mémoire/IO/fichiers bornés, API hôte `aetherion_v1` activée uniquement par capacités, sans WASI ni imports système implicites ;
+- M5-C0/C1/C2/C3/C4/C5/C6 : runtime WebAssembly optionnel derrière `plugin-runtime`, fuel/mémoire/IO/fichiers bornés, interdiction réseau explicite, commande `plugin run` avec dry-run et rapport atomique, audit de provenance avec checksums module/manifeste, API hôte `aetherion_v1` activée uniquement par capacités, sans WASI ni imports système implicites ;
 - schémas JSON versionnés exposés par `schema list/show` et diff sémantique canonique ;
 - dix-sept sous-commandes, dont `agent`, `schema`, `scene` et le prototype `capture3d`, en conservant les commandes historiques ;
 - scénarios JSON v1, assertions détaillées, budgets stricts, rapport machine-readable atomique et audit JSONL append-only ;
@@ -58,6 +62,7 @@ Sous Windows, le binaire release se trouve dans `target/release/aetherion.exe`.
 - entrées déterministes `set_velocity`, `impulse`, `translate`, `stop`, appliquées par le système `input` avant le système `movement` ;
 - diff JSON structuré par tick, entité et chemin de champ, utilisable aussi pour les manifestes de capture ;
 - rendu 2D logiciel déterministe, sans GPU, vers PPM P6 ;
+- premier pipeline 3D GPU temps réel optionnel (`render-gpu`) avec fenêtre wgpu/winit, depth buffer, caméra orthographique et chargement des scènes `Scene3d` ;
 - manifeste JSON adjacent avec caméra, dimensions, tick, checksums et entités visibles ;
 - projet déclaratif `aetherion.toml`, lisible et facilement modifiable ;
 - monde minimal de type entité/composants : identité, position 2D, vélocité 2D ;
@@ -97,6 +102,8 @@ Les coordonnées sont des entiers signés : ce choix évite les divergences usue
 Le schéma strict `aetherion.scene3d/v1` accepte toujours les `triangles` historiques et ajoute des ressources réutilisables `meshes`, `materials` et `objects`. Les transformations entières sont appliquées dans l'ordre **échelle → rotation X → rotation Y → rotation Z → translation**. Une échelle de `1000` vaut 1 ; les rotations sont exprimées en millidegrés et limitées aux multiples de `90000`. L'opacité matériau est un entier de `0` à `1000`, composé de façon déterministe avec le fond.
 
 Limites actuelles : scène 1 MiB, 10 000 meshes, 10 000 matériaux, 100 000 objets, 100 000 triangles développés, 300 000 sommets et 16 777 216 pixels. Les identifiants et références sont validés strictement, les indices hors limites sont rejetés et le rendu suit un ordre canonique. `capture3d` publie atomiquement un PPM et un manifeste adjacent ; une validation échouée retourne le code 2 sans sortie partielle.
+
+Le prototype temps réel s'utilise avec `cargo run --features render-gpu -- gpu-demo --scene FILE [--assets FILE]`. Il partage la validation et la résolution d'assets de `capture3d`, mais son rendu GPU n'est pas une sortie déterministe : les captures reproductibles restent produites par le chemin CPU.
 
 ### Ressources 3D externes M4-F
 

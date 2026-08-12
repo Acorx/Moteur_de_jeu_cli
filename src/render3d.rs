@@ -233,7 +233,7 @@ pub fn load(path: &std::path::Path) -> Result<Scene3d> {
     Ok(scene)
 }
 
-fn load_unresolved(path: &std::path::Path) -> Result<Scene3d> {
+pub fn load_unresolved(path: &std::path::Path) -> Result<Scene3d> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("scene3d_read: {}: {error}", path.display()))?;
     if metadata.len() > MAX_SCENE_BYTES {
@@ -335,6 +335,10 @@ fn safe_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
+pub fn expanded_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {
+    expand_triangles(scene)
 }
 
 fn expand_triangles(scene: &Scene3d) -> Result<Vec<Triangle>> {

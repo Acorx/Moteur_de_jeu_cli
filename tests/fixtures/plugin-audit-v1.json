@@ -1,0 +1,30 @@
+{
+  "schema": "aetherion.plugin-audit/v1",
+  "status": "verified",
+  "plugin_id": "org.aetherion.audit",
+  "plugin_version": "1.0.0",
+  "export": "aetherion_main",
+  "manifest_checksum_fnv1a": 2647410983819224278,
+  "module_checksum_fnv1a": 12152029996119359581,
+  "host_abi": {
+    "major": 1,
+    "minor": 1
+  },
+  "runtime": {
+    "engine": "wasmi",
+    "version": "0.32.3",
+    "network": false,
+    "wasi": false
+  },
+  "capabilities": [],
+  "quotas": {
+    "memory_bytes": 65536,
+    "fuel": 1000,
+    "io_read_bytes": 0,
+    "io_write_bytes": 0,
+    "files": 0
+  },
+  "signatures": {
+    "status": "not_implemented"
+  }
+}

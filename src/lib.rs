@@ -8,8 +8,13 @@ pub mod diff;
 pub mod display;
 pub mod ecs;
 pub mod error;
+pub mod gpu3d;
 pub mod plugin;
+#[cfg(feature = "plugin-runtime")]
+pub mod plugin_audit;
 pub mod plugin_lock;
+#[cfg(feature = "plugin-runtime")]
+pub mod plugin_run;
 #[cfg(feature = "plugin-runtime")]
 pub mod plugin_runtime;
 pub mod project;
@@ -83,6 +88,12 @@ pub enum Command {
         animation: Option<String>,
         assets: Option<PathBuf>,
         channels: capture::Channels,
+    },
+    GpuDemo {
+        scene: PathBuf,
+        width: u32,
+        height: u32,
+        assets: Option<PathBuf>,
     },
     Asset3dImport {
         input: PathBuf,
@@ -160,6 +171,22 @@ pub enum Command {
         dir: PathBuf,
         lockfile: PathBuf,
     },
+    PluginRun {
+        manifest: PathBuf,
+        module: PathBuf,
+        path: Option<PathBuf>,
+        scene: Option<String>,
+        assets: Option<PathBuf>,
+        export: String,
+        dry_run: bool,
+        report: Option<PathBuf>,
+    },
+    PluginAudit {
+        manifest: PathBuf,
+        module: PathBuf,
+        export: String,
+        report: Option<PathBuf>,
+    },
     ScriptRun {
         script: PathBuf,
         dry_run: bool,
@@ -214,6 +241,8 @@ impl Command {
                     let (dir, lockfile) = parse_plugin_lock_args(&args[2..])?;
                     Ok(Self::PluginLockCheck { dir, lockfile })
                 }
+                Some("run") => parse_plugin_run_args(&args[2..]),
+                Some("audit") => parse_plugin_audit_args(&args[2..]),
                 Some("list") => {
                     let root = match args.len() {
                         3 => PathBuf::from(&args[2]),
@@ -223,7 +252,7 @@ impl Command {
                     Ok(Self::PluginList { root })
                 }
                 _ => Err(
-                    "usage: aetherion plugin validate|inspect MANIFESTE | plugin list [DOSSIER]"
+                    "usage: aetherion plugin validate|inspect MANIFESTE | plugin run|audit --manifest FILE --module FILE [options] | plugin list [DOSSIER]"
                         .into(),
                 ),
             };
@@ -601,6 +630,14 @@ impl Command {
                 assets,
                 channels,
             }),
+            "gpu-demo" => Ok(Self::GpuDemo {
+                scene: scene
+                    .map(PathBuf::from)
+                    .ok_or("gpu-demo requiert --scene")?,
+                width: width.unwrap_or(1280),
+                height: height.unwrap_or(720),
+                assets,
+            }),
             "asset3d-import" => Ok(Self::Asset3dImport {
                 input: input.ok_or("asset3d-import requiert --input")?,
                 kind: asset3d_type.ok_or("asset3d-import requiert --type")?,
@@ -685,6 +722,137 @@ impl Command {
     }
 }
 
+fn parse_plugin_run_args(args: &[String]) -> Result<Command> {
+    let mut manifest = None;
+    let mut module = None;
+    let mut path = None;
+    let mut scene = None;
+    let mut assets = None;
+    let mut export = plugin_runtime_entrypoint();
+    let mut dry_run = false;
+    let mut report = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" => {
+                index += 1;
+                manifest = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin run --manifest requiert une valeur")?,
+                ));
+            }
+            "--module" => {
+                index += 1;
+                module = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin run --module requiert une valeur")?,
+                ));
+            }
+            "--path" => {
+                index += 1;
+                path = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin run --path requiert une valeur")?,
+                ));
+            }
+            "--scene" => {
+                index += 1;
+                scene = Some(
+                    args.get(index)
+                        .ok_or("plugin run --scene requiert une valeur")?
+                        .clone(),
+                );
+            }
+            "--assets" => {
+                index += 1;
+                assets = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin run --assets requiert une valeur")?,
+                ));
+            }
+            "--export" => {
+                index += 1;
+                export = args
+                    .get(index)
+                    .ok_or("plugin run --export requiert une valeur")?
+                    .clone();
+            }
+            "--dry-run" => dry_run = true,
+            "--report" => {
+                index += 1;
+                report = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin run --report requiert une valeur")?,
+                ));
+            }
+            other => return Err(format!("option inconnue pour plugin run: {other}").into()),
+        }
+        index += 1;
+    }
+    Ok(Command::PluginRun {
+        manifest: manifest.ok_or("plugin run requiert --manifest")?,
+        module: module.ok_or("plugin run requiert --module")?,
+        path,
+        scene,
+        assets,
+        export,
+        dry_run,
+        report,
+    })
+}
+
+fn parse_plugin_audit_args(args: &[String]) -> Result<Command> {
+    let mut manifest = None;
+    let mut module = None;
+    let mut export = plugin_runtime_entrypoint();
+    let mut report = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" => {
+                index += 1;
+                manifest = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin audit --manifest requiert une valeur")?,
+                ));
+            }
+            "--module" => {
+                index += 1;
+                module = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin audit --module requiert une valeur")?,
+                ));
+            }
+            "--export" => {
+                index += 1;
+                export = args
+                    .get(index)
+                    .ok_or("plugin audit --export requiert une valeur")?
+                    .clone();
+            }
+            "--report" => {
+                index += 1;
+                report = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or("plugin audit --report requiert une valeur")?,
+                ));
+            }
+            other => return Err(format!("option inconnue pour plugin audit: {other}").into()),
+        }
+        index += 1;
+    }
+    Ok(Command::PluginAudit {
+        manifest: manifest.ok_or("plugin audit requiert --manifest")?,
+        module: module.ok_or("plugin audit requiert --module")?,
+        export,
+        report,
+    })
+}
+
+fn plugin_runtime_entrypoint() -> String {
+    "aetherion_main".into()
+}
+
 fn parse_plugin_lock_args(args: &[String]) -> Result<(PathBuf, PathBuf)> {
     let mut dir = None;
     let mut lockfile = None;
@@ -738,7 +906,7 @@ fn parse_percent_option(value: &str, option: &str) -> Result<u64> {
 }
 
 pub fn help() -> &'static str {
-    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte ou liste les manifestes de plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
+    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  gpu-demo       Ouvre une scÃƒÂ¨ne 3D temps rÃƒÂ©el via wgpu\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte, exécute ou liste les plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM11 GPU:\n  gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] (requiert --features render-gpu)\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
 }
 
 pub fn execute(command: Command) -> Result<Option<String>> {
@@ -876,6 +1044,15 @@ pub fn execute(command: Command) -> Result<Option<String>> {
                 manifest.display()
             )))
         }
+        Command::GpuDemo {
+            scene,
+            width,
+            height,
+            assets,
+        } => {
+            gpu3d::run(&scene, assets.as_deref(), width, height)?;
+            Ok(None)
+        }
         Command::Asset3dImport {
             input,
             kind,
@@ -984,6 +1161,64 @@ pub fn execute(command: Command) -> Result<Option<String>> {
             serde_json::to_string_pretty(&plugin_lock::check(&dir, &lockfile)?)
                 .map_err(|e| format!("plugin_lock_serialize: {e}"))?,
         )),
+        Command::PluginRun {
+            manifest,
+            module,
+            path,
+            scene,
+            assets,
+            export,
+            dry_run,
+            report,
+        } => {
+            #[cfg(feature = "plugin-runtime")]
+            {
+                let value = plugin_run::run(plugin_run::RunOptions {
+                    manifest,
+                    module,
+                    path,
+                    scene,
+                    assets,
+                    export,
+                    dry_run,
+                    report,
+                })?;
+                Ok(Some(serde_json::to_string_pretty(&value).map_err(|e| {
+                    format!("plugin_run_report_serialize: {e}")
+                })?))
+            }
+            #[cfg(not(feature = "plugin-runtime"))]
+            {
+                let _ = (
+                    manifest, module, path, scene, assets, export, dry_run, report,
+                );
+                Err("plugin_runtime_feature_disabled".into())
+            }
+        }
+        Command::PluginAudit {
+            manifest,
+            module,
+            export,
+            report,
+        } => {
+            #[cfg(feature = "plugin-runtime")]
+            {
+                let value = plugin_audit::audit(plugin_audit::AuditOptions {
+                    manifest,
+                    module,
+                    export,
+                    report,
+                })?;
+                Ok(Some(serde_json::to_string_pretty(&value).map_err(|e| {
+                    format!("plugin_audit_report_serialize: {e}")
+                })?))
+            }
+            #[cfg(not(feature = "plugin-runtime"))]
+            {
+                let _ = (manifest, module, export, report);
+                Err("plugin_runtime_feature_disabled".into())
+            }
+        }
         Command::ScriptRun {
             script: script_path,
             dry_run,
@@ -1081,5 +1316,85 @@ mod tests {
     #[test]
     fn rejects_unknown_command() {
         assert!(Command::parse(&["fly".into()]).is_err());
+    }
+
+    #[test]
+    fn parses_gpu_demo_with_external_assets() {
+        let args = [
+            "gpu-demo",
+            "--scene",
+            "scene.json",
+            "--assets",
+            "assets.json",
+            "--width",
+            "1920",
+            "--height",
+            "1080",
+        ]
+        .map(str::to_string);
+        assert_eq!(
+            Command::parse(&args).unwrap(),
+            Command::GpuDemo {
+                scene: PathBuf::from("scene.json"),
+                width: 1920,
+                height: 1080,
+                assets: Some(PathBuf::from("assets.json")),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_plugin_audit_with_report() {
+        let args = [
+            "plugin",
+            "audit",
+            "--manifest",
+            "plugin.json",
+            "--module",
+            "plugin.wasm",
+            "--report",
+            "audit.json",
+        ]
+        .map(str::to_string);
+        assert_eq!(
+            Command::parse(&args).unwrap(),
+            Command::PluginAudit {
+                manifest: PathBuf::from("plugin.json"),
+                module: PathBuf::from("plugin.wasm"),
+                export: "aetherion_main".into(),
+                report: Some(PathBuf::from("audit.json")),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_plugin_run_with_dry_run_and_report() {
+        let args = [
+            "plugin",
+            "run",
+            "--manifest",
+            "plugin.json",
+            "--module",
+            "plugin.wasm",
+            "--dry-run",
+            "--report",
+            "report.json",
+            "--export",
+            "entry",
+        ]
+        .map(str::to_string);
+        assert_eq!(
+            Command::parse(&args).unwrap(),
+            Command::PluginRun {
+                manifest: PathBuf::from("plugin.json"),
+                module: PathBuf::from("plugin.wasm"),
+                path: None,
+                scene: None,
+                assets: None,
+                export: "entry".into(),
+                dry_run: true,
+                report: Some(PathBuf::from("report.json")),
+            }
+        );
     }
 }

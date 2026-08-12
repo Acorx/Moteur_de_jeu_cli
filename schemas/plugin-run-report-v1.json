@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/plugin-run-report-v1.json",
+  "title": "Aetherion Plugin Run Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "plugin_id",
+    "plugin_version",
+    "export",
+    "dry_run",
+    "return_code",
+    "fuel_consumed",
+    "io",
+    "telemetry"
+  ],
+  "properties": {
+    "schema": { "const": "aetherion.plugin-run-report/v1" },
+    "status": { "enum": ["planned", "executed"] },
+    "plugin_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "plugin_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "export": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "dry_run": { "type": "boolean" },
+    "return_code": { "type": ["integer", "null"] },
+    "fuel_consumed": { "type": ["integer", "null"], "minimum": 0 },
+    "io": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["read_bytes", "write_bytes", "files"],
+      "properties": {
+        "read_bytes": { "type": "integer", "minimum": 0 },
+        "write_bytes": { "type": "integer", "minimum": 0 },
+        "files": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "telemetry": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "value"],
+        "properties": {
+          "key": { "type": "integer" },
+          "value": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

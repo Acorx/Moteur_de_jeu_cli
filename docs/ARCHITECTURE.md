@@ -8,7 +8,11 @@ Aetherion est un moteur CLI headless dont les sorties observables sont reproduct
 
 Le runtime `plugin_runtime` est compile uniquement avec la feature Cargo `plugin-runtime` et repose sur l'interpreteur `wasmi 0.32.3`. Le build par defaut ne depend donc pas de WebAssembly. C0 instancie les modules avec un `Linker` vide, sans import hote ni WASI, puis appelle un export `aetherion_main` de signature `() -> i32`. Les erreurs de lecture, compilation, instanciation, demarrage, export et trap sont converties en prefixes stables `plugin_runtime_*`.
 
-Cette couche ne lit encore aucun manifeste ni capacite. C1 applique deja `fuel` via `Config::consume_fuel`/`Store::set_fuel` et la memoire via `StoreLimitsBuilder`, avec classification deterministe des depassements. Les quotas sont encore fournis directement par `RuntimeLimits`; leur projection depuis `PluginManifest` et l'API hote arrivent en C2. IO, reseau, CLI et rapport versionne restent respectivement C3, C4 et C5.
+Cette couche ne lit encore aucun manifeste ni capacite. C1 applique deja `fuel` via `Config::consume_fuel`/`Store::set_fuel` et la memoire via `StoreLimitsBuilder`, avec classification deterministe des depassements. Les quotas sont encore fournis directement par `RuntimeLimits`; leur projection depuis `PluginManifest` et l'API hote arrive en C2. IO, reseau, CLI, rapports et provenance sont ensuite bornes par C3-C6.
+
+## Audit de provenance M5-C6
+
+`plugin_audit` reste derriere `plugin-runtime` et compose les validations du manifeste et du runtime sans instancier le module. Il calcule les checksums FNV-1a des octets exacts du manifeste et du module, puis publie `aetherion.plugin-audit/v1` avec l'ABI, les capacités, les quotas, `wasmi 0.32.3` et l'interdiction explicite du réseau/WASI. La publication est atomique et ne contient aucun chemin local. Le statut `verified` signifie que la structure, l'export et les imports sont vérifiés; `signatures.status` reste `not_implemented` tant que la confiance cryptographique n'est pas implémentée.
 
 ## Fondations du module de physique 2D M7-A
 
@@ -55,3 +59,13 @@ Le manifeste liste les canaux dans l'ordre fixe profondeur, normales, segmentati
 Le module `visual_diff3d` orchestre `visual_diff` a partir de deux manifestes `aetherion.capture3d/v1`. Le flux est : validation stricte des manifestes et dimensions, resolution de la couleur adjacente et des fichiers declares, verification de la presence et de l'encodage de chaque canal, comparaison en ordre canonique par nom, puis construction du rapport `aetherion.visual-diff3d/v1`.
 
 Couleur, normales et segmentation sont decodees comme PPM P6 RGB8; la profondeur comme PGM P5 u16 big-endian. Les tolerances couleur/profondeur/normales sont independantes. La segmentation est comparee pixel par pixel et ses differences sont agregees dans une `BTreeMap` par paire `(baseline_id, candidate_id)`, puis enrichies avec les mappings de primitives (`triangle_id`, `source`, `rank`). Le rapport est serialise de facon deterministe et publie atomiquement. Un depassement retourne 1 avec le JSON sur stdout; un manifeste/canal absent ou incompatible retourne 2.
+
+## Pipeline GPU temps reel M11
+
+Le pipeline temps reel est optionnel et n'est pas une extension du chemin deterministe. La feature Cargo `render-gpu` active `wgpu 0.19`, `winit 0.29`, `glam` et les utilitaires de buffers. Le build par defaut reste sans dependance GPU et `gpu-demo` retourne `render_gpu_feature_disabled` lorsqu'il est compile sans cette feature.
+
+`gpu-demo` charge une `Scene3d` validee, resout optionnellement le meme manifeste `--assets` que `capture3d`, puis construit un snapshot de presentation immuable. Les triangles sont convertis explicitement des coordonnees entieres vers des sommets `f32`; aucune donnee GPU ne revient vers `World` ou la simulation. La camera conserve actuellement la semantique orthographique `pixels_per_unit` du format historique.
+
+Le backend initialise une surface, choisit un format sRGB et le mode FIFO lorsque le pilote le propose, puis rend un pipeline de triangles colores avec depth buffer `Depth24Plus`. Les erreurs de surface sont classees (`Lost`, `Outdated`, `Timeout`, `OutOfMemory`) et la boucle redimensionne la surface sans interrompre la simulation. Ce rendu n'est pas une preuve de determinisme et ne remplace pas les captures CPU.
+
+La decision complete est documentee dans [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md). Les prochaines extensions doivent conserver cette frontiere avant d'ajouter textures, glTF, animation GPU, culling ou physique de presentation.

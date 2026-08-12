@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 
+use serde::Serialize;
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 use crate::assets::AssetManager;
@@ -18,6 +19,7 @@ pub const MAX_TELEMETRY_RECORDS: usize = 1024;
 pub const IO_READ_QUOTA_ERROR: &str = "plugin_runtime_io_read_quota";
 pub const IO_WRITE_QUOTA_ERROR: &str = "plugin_runtime_io_write_quota";
 pub const FILES_QUOTA_ERROR: &str = "plugin_runtime_files_quota";
+pub const NETWORK_DENIED_ERROR: &str = "plugin_runtime_network_denied";
 
 const SIMULATION_TICK: &str = "simulation_tick";
 const SIMULATION_CHECKSUM: &str = "simulation_checksum";
@@ -63,7 +65,7 @@ impl RuntimeIoLimits {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct IoUsage {
     pub read_bytes: u64,
     pub write_bytes: u64,
@@ -92,7 +94,7 @@ pub struct SceneView {
     pub asset_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TelemetryRecord {
     pub key: i64,
     pub value: i64,
@@ -182,7 +184,7 @@ impl HostContext {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct ExecutionResult {
     pub return_code: i32,
     pub fuel_consumed: u64,
@@ -280,6 +282,42 @@ pub fn execute_bytes_with_context(
         host,
     )
     .map(|report| report.result)
+}
+
+pub fn validate_bytes_with_manifest(
+    bytes: &[u8],
+    export: &str,
+    manifest: &PluginManifest,
+    host: &HostContext,
+) -> Result<()> {
+    plugin::validate(manifest)?;
+    if export.is_empty() || export.len() > 128 {
+        return Err("plugin_runtime_export_invalid".into());
+    }
+    if bytes.is_empty() {
+        return Err("plugin_runtime_module_empty".into());
+    }
+    usize::try_from(manifest.quotas.memory_bytes)
+        .map_err(|_| "plugin_runtime_memory_limit_invalid")?;
+    let mut config = Config::default();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config);
+    let module = Module::new(&engine, bytes)
+        .map_err(|error| format_error("plugin_runtime_compile", error))?;
+    let capabilities = manifest.capabilities.iter().copied().collect();
+    validate_imports(&module, &capabilities)?;
+    if module.get_export(export).is_none() {
+        return Err("plugin_runtime_export".into());
+    }
+    IoAccounting::new(
+        RuntimeIoLimits {
+            read_bytes: manifest.quotas.io_read_bytes,
+            write_bytes: manifest.quotas.io_write_bytes,
+            files: manifest.quotas.files,
+        },
+        host.assets.len(),
+    )?;
+    Ok(())
 }
 
 pub fn execute_bytes_with_manifest(
@@ -391,6 +429,14 @@ fn execute_internal(
 
 fn validate_imports(module: &Module, capabilities: &BTreeSet<Capability>) -> Result<()> {
     for import in module.imports() {
+        if is_network_import(import.module(), import.name()) {
+            return Err(format!(
+                "{NETWORK_DENIED_ERROR}: {}/{}",
+                import.module(),
+                import.name()
+            )
+            .into());
+        }
         if import.module() != HOST_MODULE {
             return Err(format!(
                 "plugin_runtime_import_denied: {}/{}",
@@ -607,6 +653,16 @@ fn register_imports(
     Ok(())
 }
 
+fn is_network_import(module: &str, name: &str) -> bool {
+    let module = module.to_ascii_lowercase();
+    let name = name.to_ascii_lowercase();
+    [
+        "wasi", "socket", "network", "tcp", "udp", "http", "https", "dns",
+    ]
+    .iter()
+    .any(|marker| module.contains(marker) || name.contains(marker))
+}
+
 fn capability_for_import(name: &str) -> Option<Capability> {
     match name {
         SIMULATION_TICK
@@ -645,6 +701,7 @@ fn classify_runtime_error(prefix: &'static str) -> impl FnOnce(wasmi::Error) -> 
         } else if lower.starts_with(IO_READ_QUOTA_ERROR)
             || lower.starts_with(IO_WRITE_QUOTA_ERROR)
             || lower.starts_with(FILES_QUOTA_ERROR)
+            || lower.starts_with(NETWORK_DENIED_ERROR)
         {
             text.into()
         } else if lower.contains("memory") || lower.contains("growth operation limited") {
@@ -998,5 +1055,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message.starts_with("plugin_runtime_import_denied"));
+    }
+
+    #[test]
+    fn network_and_wasi_imports_are_rejected_before_instantiation() {
+        for (module_name, import_name) in [
+            ("wasi_snapshot_preview1", "fd_write"),
+            ("wasi:io", "poll_oneoff"),
+            ("env", "socket_open"),
+            ("network", "connect"),
+        ] {
+            let module =
+                wasm_with_import_from(module_name, import_name, &[0x60, 0, 1, 0x7f], &[0x10, 0x00]);
+            let error = execute_bytes_with_manifest(
+                &module,
+                DEFAULT_ENTRYPOINT,
+                &manifest(vec![]),
+                HostContext::default(),
+            )
+            .unwrap_err();
+            assert!(
+                error.message.starts_with(NETWORK_DENIED_ERROR),
+                "{module_name}/{import_name}: {}",
+                error.message
+            );
+        }
     }
 }

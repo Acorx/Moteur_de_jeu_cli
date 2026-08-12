@@ -58,6 +58,14 @@ pub const SCHEMAS: &[(&str, &str)] = &[
         "plugin-lock",
         include_str!("../schemas/plugin-lock-v1.json"),
     ),
+    (
+        "plugin-run-report",
+        include_str!("../schemas/plugin-run-report-v1.json"),
+    ),
+    (
+        "plugin-audit",
+        include_str!("../schemas/plugin-audit-v1.json"),
+    ),
     ("script", include_str!("../schemas/script-v1.json")),
     (
         "script-report",
