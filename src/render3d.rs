@@ -544,7 +544,18 @@ pub fn resolve_assets_with_textures(
     scene: &mut Scene3d,
     manifest: &std::path::Path,
 ) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
-    let assets = crate::assets3d::load_manifest(manifest)?;
+    resolve_assets_with_textures_cached(scene, manifest, None)
+}
+
+pub fn resolve_assets_with_textures_cached(
+    scene: &mut Scene3d,
+    manifest: &std::path::Path,
+    cache_root: Option<&std::path::Path>,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    let assets = match cache_root {
+        Some(root) => crate::assets3d::load_manifest_cached(manifest, root)?,
+        None => crate::assets3d::load_manifest(manifest)?,
+    };
     let mut textures = std::collections::BTreeMap::new();
     for (_, asset) in assets {
         match asset {
@@ -640,13 +651,38 @@ pub fn capture_with_assets(
     animation: Option<&str>,
     channels: &Channels,
 ) -> Result<std::path::PathBuf> {
+    capture_with_assets_cached(
+        scene_path,
+        assets_path,
+        output,
+        width,
+        height,
+        ticks,
+        animation,
+        channels,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn capture_with_assets_cached(
+    scene_path: &std::path::Path,
+    assets_path: Option<&std::path::Path>,
+    output: &std::path::Path,
+    width: u32,
+    height: u32,
+    ticks: u64,
+    animation: Option<&str>,
+    channels: &Channels,
+    cache_root: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf> {
     let mut scene = if assets_path.is_some() {
         load_unresolved(scene_path)?
     } else {
         load(scene_path)?
     };
     if let Some(path) = assets_path {
-        resolve_assets(&mut scene, path)?;
+        let _ = resolve_assets_with_textures_cached(&mut scene, path, cache_root)?;
     }
     let sampled = animation
         .map(|id| sample_animation(&scene, id, ticks))

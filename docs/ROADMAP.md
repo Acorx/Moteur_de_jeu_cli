@@ -120,7 +120,9 @@ Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validat
 
 **M12.4 présente :** `Material3d` accepte un ID `base_color_texture`, les manifests acceptent les assets binaires PNG/JPEG, et le backend GPU décode les textures référencées avec quotas 4096×4096/16 777 216 pixels. Le renderer crée un bind group par texture et regroupe les sommets en lots de matériau ; le CPU ignore les textures et reste l'oracle déterministe.
 
-**Prochaines tranches M12 :** cache d'assets par checksum, chargement asynchrone, import des textures glTF et matériaux textures plus riches avec quotas.
+**M12.5 présente :** `--cache-dir` pour `capture3d`, `gpu-demo` et `gpu-benchmark`. Le cache est versionné par type, checksum, format et importeur, publié atomiquement et toujours précédé d'une vérification du fichier source. Il est strictement hors des données déterministes et les erreurs de cache déclenchent un repli transparent.
+
+**Prochaines tranches M12 :** chargement asynchrone, import des textures glTF et matériaux textures plus riches avec quotas.
 
 ## M8 — Tooling, build et packaging (futur)
 

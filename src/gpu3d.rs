@@ -688,10 +688,12 @@ mod runtime {
     fn load_scene(
         scene_path: &Path,
         assets_path: Option<&Path>,
+        cache_root: Option<&Path>,
     ) -> Result<(Scene3d, BTreeMap<String, Vec<u8>>)> {
         if let Some(assets_path) = assets_path {
             let mut scene = render3d::load_unresolved(scene_path)?;
-            let textures = render3d::resolve_assets_with_textures(&mut scene, assets_path)?;
+            let textures =
+                render3d::resolve_assets_with_textures_cached(&mut scene, assets_path, cache_root)?;
             Ok((scene, textures))
         } else {
             Ok((render3d::load(scene_path)?, BTreeMap::new()))
@@ -704,9 +706,17 @@ mod runtime {
         width: u32,
         height: u32,
         max_frames: Option<u64>,
+        cache_root: Option<&Path>,
     ) -> Result<RunSummary> {
-        run_internal(scene_path, assets_path, width, height, max_frames)
-            .map(|(summary, _, _)| summary)
+        run_internal(
+            scene_path,
+            assets_path,
+            width,
+            height,
+            max_frames,
+            cache_root,
+        )
+        .map(|(summary, _, _)| summary)
     }
 
     pub fn benchmark(
@@ -715,12 +725,19 @@ mod runtime {
         width: u32,
         height: u32,
         frames: u64,
+        cache_root: Option<&Path>,
     ) -> Result<BenchmarkSummary> {
         if frames == 0 {
             return Err("render_gpu_benchmark_frames_invalid: minimum 1".into());
         }
-        let (summary, adapter, elapsed) =
-            run_internal(scene_path, assets_path, width, height, Some(frames))?;
+        let (summary, adapter, elapsed) = run_internal(
+            scene_path,
+            assets_path,
+            width,
+            height,
+            Some(frames),
+            cache_root,
+        )?;
         let elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
         let fps_milli = if elapsed_ms == 0 {
             0
@@ -751,11 +768,12 @@ mod runtime {
         width: u32,
         height: u32,
         max_frames: Option<u64>,
+        cache_root: Option<&Path>,
     ) -> Result<(RunSummary, String, std::time::Duration)> {
         if width == 0 || height == 0 {
             return Err("render_gpu_dimensions_invalid".into());
         }
-        let (scene, texture_bytes) = load_scene(scene_path, assets_path)?;
+        let (scene, texture_bytes) = load_scene(scene_path, assets_path, cache_root)?;
         let triangle_count = render3d::expanded_triangles(&scene)?.len();
         if max_frames == Some(0) {
             return Ok((
@@ -884,8 +902,9 @@ pub fn run(
     width: u32,
     height: u32,
     max_frames: Option<u64>,
+    cache_root: Option<&Path>,
 ) -> Result<RunSummary> {
-    runtime::run(scene, assets, width, height, max_frames)
+    runtime::run(scene, assets, width, height, max_frames, cache_root)
 }
 
 #[cfg(feature = "render-gpu")]
@@ -895,8 +914,9 @@ pub fn benchmark(
     width: u32,
     height: u32,
     frames: u64,
+    cache_root: Option<&Path>,
 ) -> Result<BenchmarkSummary> {
-    runtime::benchmark(scene, assets, width, height, frames)
+    runtime::benchmark(scene, assets, width, height, frames, cache_root)
 }
 
 #[cfg(not(feature = "render-gpu"))]
@@ -906,6 +926,7 @@ pub fn run(
     _width: u32,
     _height: u32,
     _max_frames: Option<u64>,
+    _cache_root: Option<&Path>,
 ) -> Result<RunSummary> {
     Err("render_gpu_feature_disabled: compilez avec --features render-gpu".into())
 }
@@ -917,6 +938,7 @@ pub fn benchmark(
     _width: u32,
     _height: u32,
     _frames: u64,
+    _cache_root: Option<&Path>,
 ) -> Result<BenchmarkSummary> {
     Err("render_gpu_feature_disabled: compilez avec --features render-gpu".into())
 }

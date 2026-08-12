@@ -16,6 +16,8 @@ pub const MAX_MANIFEST_BYTES: u64 = 1_048_576;
 pub const MAX_ASSETS: usize = 20_000;
 pub const MAX_ASSET_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+pub const CACHE_FORMAT_VERSION: &str = "format-v1";
+pub const IMPORTER_VERSION: &str = "assets3d-loader-v1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +73,17 @@ struct MaterialDocument {
 }
 
 pub fn load_manifest(path: &Path) -> Result<BTreeMap<String, Asset3d>> {
+    load_manifest_internal(path, None)
+}
+
+pub fn load_manifest_cached(path: &Path, cache_root: &Path) -> Result<BTreeMap<String, Asset3d>> {
+    load_manifest_internal(path, Some(cache_root))
+}
+
+fn load_manifest_internal(
+    path: &Path,
+    cache_root: Option<&Path>,
+) -> Result<BTreeMap<String, Asset3d>> {
     let metadata = fs::metadata(path)
         .map_err(|error| format!("assets3d_manifest_read: {}: {error}", path.display()))?;
     if metadata.len() > MAX_MANIFEST_BYTES {
@@ -116,7 +129,7 @@ pub fn load_manifest(path: &Path) -> Result<BTreeMap<String, Asset3d>> {
             let sender = sender.clone();
             let root = root.clone();
             scope.spawn(move || {
-                let result = load_entry(&root, &entry);
+                let result = load_entry(&root, &entry, cache_root);
                 let _ = sender.send((id, result));
             });
         }
@@ -129,16 +142,24 @@ pub fn load_manifest(path: &Path) -> Result<BTreeMap<String, Asset3d>> {
     Ok(loaded)
 }
 
-fn load_entry(root: &Path, entry: &Asset3dEntry) -> Result<Asset3d> {
+fn load_entry(root: &Path, entry: &Asset3dEntry, cache_root: Option<&Path>) -> Result<Asset3d> {
     let path = confined(root, Path::new(&entry.path))?;
-    let bytes =
+    let source_bytes =
         fs::read(&path).map_err(|error| format!("assets3d_read: {}: {error}", path.display()))?;
-    if bytes.len() as u64 != entry.size {
+    if source_bytes.len() as u64 != entry.size {
         return Err(format!("assets3d_size_mismatch: {}", entry.id).into());
     }
-    if checksum_bytes(&bytes) != entry.checksum {
+    if checksum_bytes(&source_bytes) != entry.checksum {
         return Err(format!("assets3d_checksum_mismatch: {}", entry.id).into());
     }
+    let bytes = cache_root
+        .and_then(|root| read_cache(root, entry))
+        .unwrap_or_else(|| {
+            if let Some(root) = cache_root {
+                write_cache(root, entry, &source_bytes);
+            }
+            source_bytes
+        });
     match entry.kind {
         Asset3dType::Mesh => {
             let document: MeshDocument = serde_json::from_slice(&bytes)
@@ -256,6 +277,47 @@ fn confined(root: &Path, requested: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+fn cache_path(cache_root: &Path, entry: &Asset3dEntry) -> PathBuf {
+    cache_root.join(format!(
+        "aetherion-asset-{}-{}-{}-{:016x}.bin",
+        asset_kind_name(entry.kind),
+        CACHE_FORMAT_VERSION,
+        IMPORTER_VERSION,
+        entry.checksum
+    ))
+}
+
+fn asset_kind_name(kind: Asset3dType) -> &'static str {
+    match kind {
+        Asset3dType::Mesh => "mesh",
+        Asset3dType::Material => "material",
+        Asset3dType::Texture => "texture",
+    }
+}
+
+fn read_cache(cache_root: &Path, entry: &Asset3dEntry) -> Option<Vec<u8>> {
+    let bytes = fs::read(cache_path(cache_root, entry)).ok()?;
+    (bytes.len() as u64 == entry.size && checksum_bytes(&bytes) == entry.checksum).then_some(bytes)
+}
+
+fn write_cache(cache_root: &Path, entry: &Asset3dEntry, bytes: &[u8]) {
+    if fs::create_dir_all(cache_root).is_err() {
+        return;
+    }
+    let target = cache_path(cache_root, entry);
+    if target.exists() {
+        return;
+    }
+    let temporary = cache_root.join(format!(
+        ".aetherion-cache-{}-{}",
+        entry.checksum,
+        std::process::id()
+    ));
+    if fs::write(&temporary, bytes).is_ok() && fs::rename(&temporary, &target).is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+}
+
 fn is_supported_texture(bytes: &[u8]) -> bool {
     bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.starts_with(&[0xff, 0xd8, 0xff])
 }
@@ -343,6 +405,28 @@ mod tests {
             assert!(matches!(loaded["mesh"], Asset3d::Mesh(_)));
             assert!(matches!(loaded["material"], Asset3d::Material(_)));
         }
+
+        let cache = directory.join("cache");
+        let cached = load_manifest_cached(&manifest_path, &cache).unwrap();
+        assert!(matches!(cached["mesh"], Asset3d::Mesh(_)));
+        assert!(matches!(cached["material"], Asset3d::Material(_)));
+        assert_eq!(fs::read_dir(&cache).unwrap().count(), 2);
+        let cached_again = load_manifest_cached(&manifest_path, &cache).unwrap();
+        assert_eq!(
+            cached_again.keys().collect::<Vec<_>>(),
+            cached.keys().collect::<Vec<_>>()
+        );
+        fs::write(
+            fs::read_dir(&cache)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path(),
+            b"corrupt",
+        )
+        .unwrap();
+        load_manifest_cached(&manifest_path, &cache).unwrap();
 
         fs::write(directory.join("mesh.json"), b"changed").unwrap();
         assert!(

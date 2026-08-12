@@ -110,6 +110,8 @@ Les meshes peuvent désormais conserver des `normals` optionnelles quantifiées 
 
 Les matériaux acceptent `base_color_texture`, un ID d'asset externe. Les manifests `aetherion.assets3d/v1` acceptent les entrées `texture` dont les octets sont PNG ou JPEG, avec les mêmes contrôles de chemin, taille et checksum. `capture3d` charge et valide ces assets mais garde volontairement la couleur plate ; `gpu-demo` et `gpu-benchmark` décodent les textures référencées, bornent leurs dimensions à 4096 et les dessinent par lots de matériau avec sampler filtrant.
 
+Les commandes `capture3d`, `gpu-demo` et `gpu-benchmark` acceptent `--cache-dir DIR`. Le cache est hors du format de scène, indexé par type d'asset, checksum, version de format et version d'importeur. Le fichier source est toujours relu et vérifié avant utilisation ; un cache absent, corrompu ou non inscriptible est ignoré sans modifier le résultat. Il s'agit d'une optimisation de présentation, jamais d'une entrée de simulation.
+
 `gltf-import` convertit un fichier glTF ou GLB vers `aetherion.scene3d/v1`. Les positions sont quantifiées au millième, les normales sont transformées par l'inverse-transposée puis quantifiées à `1_000_000`, les UV du canal 0 sont quantifiés à `1_000_000`, les transformations de nœuds sont composées puis cuites dans les vertices, les primitives non triangulées sont refusées et les matériaux utilisent leur couleur PBR de base. Les textures glTF, skins et animations ne sont pas encore importés. La sortie est canonique et publiée atomiquement ; la commande nécessite `--features gltf-import`.
 
 ### Ressources 3D externes M4-F
