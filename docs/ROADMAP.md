@@ -130,7 +130,9 @@ Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validat
 
 **M15.2 présente :** la préparation GPU construit une géométrie locale par lot `(mesh, material, texture)` et un instance buffer contenant les matrices modèle et normale de chaque objet visible. Le renderer exécute un draw indexed instancié par lot au lieu de dupliquer les sommets et de dessiner chaque objet séparément. Les meshes avec normales conservent leurs indices et leurs sommets partagés ; les meshes historiques sans normales ne dupliquent les sommets que par face pour préserver le flat-shading. Les rapports et le chemin CPU restent inchangés sur le plan déterministe.
 
-**Prochaines tranches M15 :** cache de géométrie GPU et pré-calcul des AABB locales, LOD, puis culling GPU lorsque le bénéfice et les contraintes multi-adaptateurs seront mesurés.
+**M15.3 présente :** les bounds locales sont calculées une fois par mesh sur les sommets référencés, validées en entiers, puis les huit coins sont transformés avec les opérations exactes de la scène pour effectuer le culling sans appeler `expanded_mesh_triangles`. La géométrie locale est préparée une seule fois par lot et conservée dans les buffers GPU pendant la durée du renderer ; la représentation de présentation sépare donc explicitement les ressources statiques des instances. Les tests couvrent les bounds locales, les rotations discrètes, les références et le partage de géométrie.
+
+**Prochaines tranches M15 :** LOD déterministe, puis culling GPU lorsque le bénéfice et les contraintes multi-adaptateurs seront mesurés.
 
 ## M8 — Tooling, build et packaging (futur)
 

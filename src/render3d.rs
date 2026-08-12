@@ -69,7 +69,7 @@ const fn default_scale() -> u32 {
     16
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Vertex3 {
     pub x: i32,
@@ -101,6 +101,122 @@ pub struct Mesh3d {
     /// An empty vector means that the mesh has no texture coordinates.
     #[serde(default)]
     pub uvs: Vec<[i32; 2]>,
+}
+
+/// Integer bounds of the referenced vertices of a mesh.
+///
+/// Bounds are presentation metadata. They do not enter scene serialization,
+/// simulation state, checksums, or replays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshBounds3d {
+    pub min: Vertex3,
+    pub max: Vertex3,
+}
+
+/// Computes bounds without expanding indexed faces into transformed triangles.
+///
+/// The function validates mesh indices and optional attributes so GPU
+/// preparation can safely use the result without duplicating scene geometry.
+pub fn mesh_bounds(mesh: &Mesh3d) -> Result<Option<MeshBounds3d>> {
+    if mesh.vertices.len() > MAX_VERTICES || mesh.triangles.len() > MAX_TRIANGLES {
+        return Err("scene3d_mesh_quota".into());
+    }
+    validate_mesh_attributes(mesh)?;
+    let mut bounds: Option<MeshBounds3d> = None;
+    for face in &mesh.triangles {
+        for index in face {
+            let vertex = mesh
+                .vertices
+                .get(*index as usize)
+                .ok_or("scene3d_mesh_index_invalid")?;
+            bounds = Some(match bounds {
+                Some(current) => MeshBounds3d {
+                    min: Vertex3 {
+                        x: current.min.x.min(vertex.x),
+                        y: current.min.y.min(vertex.y),
+                        z: current.min.z.min(vertex.z),
+                    },
+                    max: Vertex3 {
+                        x: current.max.x.max(vertex.x),
+                        y: current.max.y.max(vertex.y),
+                        z: current.max.z.max(vertex.z),
+                    },
+                },
+                None => MeshBounds3d {
+                    min: *vertex,
+                    max: *vertex,
+                },
+            });
+        }
+    }
+    Ok(bounds)
+}
+
+/// Transforms an integer mesh bound using the scene transform exactly.
+///
+/// Transforming all eight corners is exact for the currently supported
+/// axis-aligned quarter-turn rotations and remains conservative for future
+/// transforms.
+pub fn transform_mesh_bounds(bounds: MeshBounds3d, transform: Transform3d) -> Result<MeshBounds3d> {
+    let corners = [
+        Vertex3 {
+            x: bounds.min.x,
+            y: bounds.min.y,
+            z: bounds.min.z,
+        },
+        Vertex3 {
+            x: bounds.min.x,
+            y: bounds.min.y,
+            z: bounds.max.z,
+        },
+        Vertex3 {
+            x: bounds.min.x,
+            y: bounds.max.y,
+            z: bounds.min.z,
+        },
+        Vertex3 {
+            x: bounds.min.x,
+            y: bounds.max.y,
+            z: bounds.max.z,
+        },
+        Vertex3 {
+            x: bounds.max.x,
+            y: bounds.min.y,
+            z: bounds.min.z,
+        },
+        Vertex3 {
+            x: bounds.max.x,
+            y: bounds.min.y,
+            z: bounds.max.z,
+        },
+        Vertex3 {
+            x: bounds.max.x,
+            y: bounds.max.y,
+            z: bounds.min.z,
+        },
+        Vertex3 {
+            x: bounds.max.x,
+            y: bounds.max.y,
+            z: bounds.max.z,
+        },
+    ];
+    let mut transformed = [Vertex3 { x: 0, y: 0, z: 0 }; 8];
+    for (index, corner) in corners.into_iter().enumerate() {
+        transformed[index] = transform_vertex(corner, transform)?;
+    }
+    let mut result = MeshBounds3d {
+        min: transformed[0],
+        max: transformed[0],
+    };
+    for vertex in &transformed[1..] {
+        result.min.x = result.min.x.min(vertex.x);
+        result.min.y = result.min.y.min(vertex.y);
+        result.min.z = result.min.z.min(vertex.z);
+        result.max.x = result.max.x.max(vertex.x);
+        result.max.y = result.max.y.max(vertex.y);
+        result.max.z = result.max.z.max(vertex.z);
+    }
+    Ok(result)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1002,6 +1118,44 @@ mod tests {
         };
         let transformed = transform_vertex(Vertex3 { x: 1, y: 2, z: 3 }, transform).unwrap();
         assert_eq!([transformed.x, transformed.y, transformed.z], [22, 26, 28]);
+    }
+
+    #[test]
+    fn mesh_bounds_are_local_referenced_and_transform_exactly() {
+        let mut scene = resource_scene(vec![object("object")]);
+        scene.meshes[0].vertices.push(Vertex3 {
+            x: 1000,
+            y: 1000,
+            z: 1000,
+        });
+        let bounds = mesh_bounds(&scene.meshes[0]).unwrap().unwrap();
+        assert_eq!(
+            bounds,
+            MeshBounds3d {
+                min: Vertex3 { x: 1, y: 2, z: 3 },
+                max: Vertex3 { x: 2, y: 3, z: 3 },
+            }
+        );
+        let transform = Transform3d {
+            rotation: [90_000, 0, 0],
+            translation: [10, 20, 30],
+            ..Transform3d::default()
+        };
+        assert_eq!(
+            transform_mesh_bounds(bounds, transform).unwrap(),
+            MeshBounds3d {
+                min: Vertex3 {
+                    x: 11,
+                    y: 17,
+                    z: 32
+                },
+                max: Vertex3 {
+                    x: 12,
+                    y: 17,
+                    z: 33
+                },
+            }
+        );
     }
 
     #[test]

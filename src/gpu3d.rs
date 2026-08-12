@@ -564,18 +564,37 @@ mod runtime {
         texture_bytes: &BTreeMap<String, Vec<u8>>,
         viewport: PhysicalSize<u32>,
     ) -> Result<PreparedScene> {
-        let expanded = render3d::expanded_mesh_triangles(scene)?;
-        let visible = visible_objects(&expanded, scene.camera, viewport);
-        let mut batches = BTreeMap::<(String, String, Option<String>), BatchData>::new();
-        let mut rendered_triangles: usize = 0;
         let mut meshes = BTreeMap::new();
+        let mut mesh_bounds = BTreeMap::new();
         for mesh in &scene.meshes {
             meshes.insert(mesh.id.as_str(), mesh);
+            mesh_bounds.insert(mesh.id.as_str(), render3d::mesh_bounds(mesh)?);
         }
         let mut materials = BTreeMap::new();
         for material in &scene.materials {
             materials.insert(material.id.as_str(), material);
         }
+        for object in &scene.objects {
+            if !meshes.contains_key(object.mesh.as_str()) {
+                return Err("render_gpu_mesh_reference_missing".into());
+            }
+            if !materials.contains_key(object.material.as_str()) {
+                return Err("render_gpu_material_reference_missing".into());
+            }
+            if object
+                .transform
+                .rotation
+                .iter()
+                .any(|angle| angle.rem_euclid(90_000) != 0)
+            {
+                return Err(
+                    "scene3d_rotation_invalid: quarts de tour en millidegres uniquement".into(),
+                );
+            }
+        }
+        let visible = visible_objects(scene, &mesh_bounds, viewport)?;
+        let mut batches = BTreeMap::<(String, String, Option<String>), BatchData>::new();
+        let mut rendered_triangles: usize = 0;
 
         for object in &scene.objects {
             if !visible.contains(&object.id) {
@@ -667,7 +686,15 @@ mod runtime {
             let mut indices = Vec::with_capacity(mesh.triangles.len() * 3);
             for face in &mesh.triangles {
                 let base = u32::try_from(vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
-                let positions = face.map(|index| base_position(mesh.vertices[index as usize]));
+                let mut positions = [[0.0; 3]; 3];
+                for (slot, index) in face.iter().enumerate() {
+                    positions[slot] = mesh
+                        .vertices
+                        .get(*index as usize)
+                        .copied()
+                        .map(base_position)
+                        .ok_or("scene3d_mesh_index_invalid")?;
+                }
                 let normal = flat_normal(positions);
                 vertices.extend(positions.into_iter().map(|position| Vertex {
                     position,
@@ -763,26 +790,38 @@ mod runtime {
     }
 
     fn visible_objects(
-        triangles: &[render3d::ExpandedMeshTriangle3d],
-        camera: Camera3d,
+        scene: &Scene3d,
+        mesh_bounds: &BTreeMap<&str, Option<render3d::MeshBounds3d>>,
         viewport: PhysicalSize<u32>,
-    ) -> std::collections::BTreeSet<String> {
+    ) -> Result<std::collections::BTreeSet<String>> {
         let mut bounds = BTreeMap::<String, ([f32; 3], [f32; 3])>::new();
-        for expanded in triangles {
-            let Some(object) = expanded.object.as_ref() else {
+        for object in &scene.objects {
+            let local = mesh_bounds
+                .get(object.mesh.as_str())
+                .ok_or("render_gpu_mesh_reference_missing")?;
+            let Some(local) = *local else {
                 continue;
             };
+            let transformed = render3d::transform_mesh_bounds(local, object.transform)?;
             let entry = bounds
-                .entry(object.clone())
+                .entry(object.id.clone())
                 .or_insert(([f32::MAX; 3], [f32::MIN; 3]));
-            for vertex in expanded.triangle.vertices {
-                let point = [vertex.x as f32, vertex.y as f32, vertex.z as f32];
-                for (axis, coordinate) in point.into_iter().enumerate() {
-                    entry.0[axis] = entry.0[axis].min(coordinate);
-                    entry.1[axis] = entry.1[axis].max(coordinate);
-                }
+            let min = [
+                transformed.min.x as f32,
+                transformed.min.y as f32,
+                transformed.min.z as f32,
+            ];
+            let max = [
+                transformed.max.x as f32,
+                transformed.max.y as f32,
+                transformed.max.z as f32,
+            ];
+            for axis in 0..3 {
+                entry.0[axis] = entry.0[axis].min(min[axis]);
+                entry.1[axis] = entry.1[axis].max(max[axis]);
             }
         }
+        let camera = scene.camera;
         let scale = camera.pixels_per_unit.max(1) as f32;
         let half_width = viewport.width.max(1) as f32 / scale / 2.0;
         let half_height = viewport.height.max(1) as f32 / scale / 2.0;
@@ -792,7 +831,7 @@ mod runtime {
         let max_y = camera.y as f32 + half_height;
         let min_z = camera.z as f32 + MIN_DEPTH;
         let max_z = camera.z as f32 + MAX_DEPTH;
-        bounds
+        Ok(bounds
             .into_iter()
             .filter_map(|(id, (min, max))| {
                 let intersects = max[0] >= min_x
@@ -803,7 +842,7 @@ mod runtime {
                     && min[2] <= max_z;
                 intersects.then_some(id)
             })
-            .collect()
+            .collect())
     }
 
     fn create_gpu_textures(
