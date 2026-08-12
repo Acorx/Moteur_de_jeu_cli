@@ -132,7 +132,9 @@ Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validat
 
 **M15.3 présente :** les bounds locales sont calculées une fois par mesh sur les sommets référencés, validées en entiers, puis les huit coins sont transformés avec les opérations exactes de la scène pour effectuer le culling sans appeler `expanded_mesh_triangles`. La géométrie locale est préparée une seule fois par lot et conservée dans les buffers GPU pendant la durée du renderer ; la représentation de présentation sépare donc explicitement les ressources statiques des instances. Les tests couvrent les bounds locales, les rotations discrètes, les références et le partage de géométrie.
 
-**Prochaines tranches M15 :** LOD déterministe, puis culling GPU lorsque le bénéfice et les contraintes multi-adaptateurs seront mesurés.
+**M15.4 présente :** chaque objet peut déclarer jusqu'à huit meshes alternatifs dans `lods`. Le renderer GPU sélectionne un niveau selon la taille projetée entière (seuils 256, 96 et 32 pixels), borne le niveau à la chaîne disponible, puis cull et prépare le mesh sélectionné. Le champ est optionnel, omis de la sérialisation lorsqu'il est vide, et ignoré par le CPU, la simulation, les checksums et les replays. Les tests couvrent les références manquantes, les doublons, la rétrocompatibilité et la sélection proche/lointaine.
+
+**Prochaines tranches M15 :** hystérésis et statistiques LOD, puis culling GPU lorsque le bénéfice et les contraintes multi-adaptateurs seront mesurés.
 
 ## M8 — Tooling, build et packaging (futur)
 

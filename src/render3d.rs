@@ -16,6 +16,8 @@ pub const MAX_OBJECTS: usize = 100_000;
 pub const MAX_ANIMATIONS: usize = 10_000;
 pub const MAX_TRACKS: usize = 100_000;
 pub const MAX_KEYFRAMES: usize = 1_000_000;
+/// Maximum number of presentation LOD alternatives attached to an object.
+pub const MAX_LODS_PER_OBJECT: usize = 8;
 /// Quantization used for imported unit normals in the versioned scene format.
 pub const NORMAL_SCALE: i32 = 1_000_000;
 /// Quantization used for imported texture coordinates in the versioned scene format.
@@ -283,6 +285,10 @@ pub struct Object3d {
     pub material: String,
     #[serde(default)]
     pub transform: Transform3d,
+    /// Presentation-only mesh IDs ordered from highest to lowest detail.
+    /// The primary `mesh` field is LOD 0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lods: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -391,6 +397,7 @@ pub fn validate(scene: &Scene3d) -> Result<()> {
         return Err("scene3d_resource_quota".into());
     }
     validate_animations(scene)?;
+    validate_lod_references(scene)?;
     let expanded = expanded_triangles(scene)?;
     if expanded.len() > MAX_TRIANGLES || expanded.len().saturating_mul(3) > MAX_VERTICES {
         return Err("scene3d_triangle_quota: plafond 100000".into());
@@ -399,6 +406,30 @@ pub fn validate(scene: &Scene3d) -> Result<()> {
     ids.sort_unstable();
     if ids.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err("scene3d_duplicate_triangle: IDs uniques requis".into());
+    }
+    Ok(())
+}
+
+fn validate_lod_references(scene: &Scene3d) -> Result<()> {
+    use std::collections::BTreeSet;
+
+    let mesh_ids: BTreeSet<&str> = scene.meshes.iter().map(|mesh| mesh.id.as_str()).collect();
+    for object in &scene.objects {
+        if object.lods.len() > MAX_LODS_PER_OBJECT {
+            return Err("scene3d_lod_quota".into());
+        }
+        let mut chain = BTreeSet::new();
+        if !chain.insert(object.mesh.as_str()) {
+            return Err("scene3d_lod_duplicate".into());
+        }
+        for lod in &object.lods {
+            if !mesh_ids.contains(lod.as_str()) {
+                return Err("scene3d_lod_mesh_reference_missing".into());
+            }
+            if !chain.insert(lod.as_str()) {
+                return Err("scene3d_lod_duplicate".into());
+            }
+        }
     }
     Ok(())
 }
@@ -1095,6 +1126,7 @@ mod tests {
             mesh: "mesh".into(),
             material: "material".into(),
             transform: Transform3d::default(),
+            lods: Vec::new(),
         }
     }
 
@@ -1241,6 +1273,24 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("material_reference")
+        );
+
+        let mut bad_lod = resource_scene(vec![object("object")]);
+        bad_lod.objects[0].lods = vec!["absent".into()];
+        assert!(
+            validate(&bad_lod)
+                .unwrap_err()
+                .to_string()
+                .contains("lod_mesh_reference")
+        );
+
+        let mut duplicate_lod = resource_scene(vec![object("object")]);
+        duplicate_lod.objects[0].lods = vec!["mesh".into(), "mesh".into()];
+        assert!(
+            validate(&duplicate_lod)
+                .unwrap_err()
+                .to_string()
+                .contains("lod_duplicate")
         );
 
         let mut bad_index = resource_scene(vec![object("object")]);

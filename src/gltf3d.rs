@@ -207,6 +207,7 @@ mod runtime {
                     mesh: mesh_id,
                     material: material_id,
                     transform: Transform3d::default(),
+                    lods: Vec::new(),
                 });
             }
         }

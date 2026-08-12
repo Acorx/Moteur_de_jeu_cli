@@ -70,6 +70,10 @@ Le backend initialise une surface, choisit un format sRGB et le mode FIFO lorsqu
 
 La decision complete est documentee dans [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md). Les prochaines extensions doivent conserver cette frontière avant d'ajouter l'animation GPU, le culling GPU ou la physique de présentation.
 
+### LOD GPU M15.4
+
+`Object3d.lods` est une chaîne optionnelle de mesh IDs ; le champ `mesh` historique représente le niveau 0. La sélection est faite avant le culling à partir de la largeur/hauteur maximale des bounds transformées multipliée par `pixels_per_unit`. Les seuils entiers sont 256, 96 et 32 pixels, et le niveau demandé est borné par le nombre d'alternatives disponibles. Les bounds, les checksums et la simulation restent fondés sur le mesh principal ; le choix LOD ne touche qu'à la préparation GPU. La tranche n'interpole pas les niveaux et ne fournit pas encore d'hystérésis, qui sera ajoutée avec les changements de caméra et le streaming.
+
 ## Import glTF M12.1
 
 `gltf3d` est active par la feature optionnelle `gltf-import`; `render-gpu` l'active automatiquement. `gltf-import --input FILE --output FILE` lit les fichiers glTF et GLB via le loader glTF, selectionne la scene par defaut (ou la premiere scene), parcourt les noeuds dans l'ordre du document et convertit chaque primitive `TRIANGLES` en `Mesh3d`/`Object3d` du format `aetherion.scene3d/v1`. Les normales et les UV du canal 0 sont preserves dans les tableaux optionnels du mesh avec une quantification entiere versionnee ; une absence d'attribut reste valide. Les textures glTF ne sont pas encore importees.

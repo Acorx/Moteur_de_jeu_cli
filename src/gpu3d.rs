@@ -63,6 +63,7 @@ mod runtime {
     const MAX_DEPTH: f32 = 100_000.0;
     const MAX_TEXTURE_DIMENSION: u32 = 4096;
     const MAX_TEXTURE_PIXELS: u64 = 16_777_216;
+    const LOD_THRESHOLDS_PIXELS: [u64; 3] = [256, 96, 32];
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -559,6 +560,11 @@ mod runtime {
         pub(super) triangles: usize,
     }
 
+    struct SelectedMesh {
+        id: String,
+        bounds: Option<render3d::MeshBounds3d>,
+    }
+
     pub(super) fn scene_batches(
         scene: &Scene3d,
         texture_bytes: &BTreeMap<String, Vec<u8>>,
@@ -592,7 +598,8 @@ mod runtime {
                 );
             }
         }
-        let visible = visible_objects(scene, &mesh_bounds, viewport)?;
+        let selected = select_meshes(scene, &meshes, &mesh_bounds)?;
+        let visible = visible_objects(scene, &selected, viewport)?;
         let mut batches = BTreeMap::<(String, String, Option<String>), BatchData>::new();
         let mut rendered_triangles: usize = 0;
 
@@ -600,8 +607,11 @@ mod runtime {
             if !visible.contains(&object.id) {
                 continue;
             }
+            let selected_mesh = selected
+                .get(&object.id)
+                .ok_or("render_gpu_object_selection_missing")?;
             let mesh = meshes
-                .get(object.mesh.as_str())
+                .get(selected_mesh.id.as_str())
                 .ok_or("render_gpu_mesh_reference_missing")?;
             let material = materials
                 .get(object.material.as_str())
@@ -789,17 +799,71 @@ mod runtime {
         }
     }
 
+    fn select_meshes(
+        scene: &Scene3d,
+        meshes: &BTreeMap<&str, &render3d::Mesh3d>,
+        mesh_bounds: &BTreeMap<&str, Option<render3d::MeshBounds3d>>,
+    ) -> Result<BTreeMap<String, SelectedMesh>> {
+        let mut selected = BTreeMap::new();
+        for object in &scene.objects {
+            let primary_bounds = mesh_bounds
+                .get(object.mesh.as_str())
+                .ok_or("render_gpu_mesh_reference_missing")?
+                .to_owned();
+            let desired_level = lod_level(primary_bounds, object.transform, scene.camera)?;
+            let level = desired_level.min(object.lods.len());
+            let id = if level == 0 {
+                object.mesh.clone()
+            } else {
+                object.lods[level - 1].clone()
+            };
+            if !meshes.contains_key(id.as_str()) {
+                return Err("render_gpu_lod_mesh_reference_missing".into());
+            }
+            let bounds = mesh_bounds
+                .get(id.as_str())
+                .ok_or("render_gpu_mesh_reference_missing")?
+                .to_owned();
+            selected.insert(object.id.clone(), SelectedMesh { id, bounds });
+        }
+        Ok(selected)
+    }
+
+    fn lod_level(
+        bounds: Option<render3d::MeshBounds3d>,
+        transform: Transform3d,
+        camera: Camera3d,
+    ) -> Result<usize> {
+        let Some(bounds) = bounds else {
+            return Ok(0);
+        };
+        let transformed = render3d::transform_mesh_bounds(bounds, transform)?;
+        let extent_x = i64::from(transformed.max.x) - i64::from(transformed.min.x);
+        let extent_y = i64::from(transformed.max.y) - i64::from(transformed.min.y);
+        let extent = extent_x.max(extent_y).max(0) as u128;
+        let projected = extent.saturating_mul(u128::from(camera.pixels_per_unit));
+        if projected >= u128::from(LOD_THRESHOLDS_PIXELS[0]) {
+            Ok(0)
+        } else if projected >= u128::from(LOD_THRESHOLDS_PIXELS[1]) {
+            Ok(1)
+        } else if projected >= u128::from(LOD_THRESHOLDS_PIXELS[2]) {
+            Ok(2)
+        } else {
+            Ok(3)
+        }
+    }
+
     fn visible_objects(
         scene: &Scene3d,
-        mesh_bounds: &BTreeMap<&str, Option<render3d::MeshBounds3d>>,
+        selected: &BTreeMap<String, SelectedMesh>,
         viewport: PhysicalSize<u32>,
     ) -> Result<std::collections::BTreeSet<String>> {
         let mut bounds = BTreeMap::<String, ([f32; 3], [f32; 3])>::new();
         for object in &scene.objects {
-            let local = mesh_bounds
-                .get(object.mesh.as_str())
-                .ok_or("render_gpu_mesh_reference_missing")?;
-            let Some(local) = *local else {
+            let selected_mesh = selected
+                .get(&object.id)
+                .ok_or("render_gpu_object_selection_missing")?;
+            let Some(local) = selected_mesh.bounds else {
                 continue;
             };
             let transformed = render3d::transform_mesh_bounds(local, object.transform)?;
@@ -1314,9 +1378,58 @@ mod tests {
                 mesh: "mesh".into(),
                 material: "material".into(),
                 transform: Transform3d::default(),
+                lods: Vec::new(),
             }],
             animations: Vec::new(),
         }
+    }
+
+    fn lod_scene() -> Scene3d {
+        let mut scene = textured_scene();
+        scene.meshes[0] = Mesh3d {
+            id: "high".into(),
+            vertices: vec![
+                Vertex3 { x: 0, y: 0, z: 1 },
+                Vertex3 { x: 1, y: 0, z: 1 },
+                Vertex3 { x: 0, y: 1, z: 1 },
+                Vertex3 { x: 1, y: 1, z: 1 },
+            ],
+            triangles: vec![[0, 1, 2], [1, 3, 2]],
+            normals: Vec::new(),
+            uvs: Vec::new(),
+        };
+        scene.meshes.push(Mesh3d {
+            id: "low".into(),
+            vertices: vec![
+                Vertex3 { x: 0, y: 0, z: 1 },
+                Vertex3 { x: 1, y: 0, z: 1 },
+                Vertex3 { x: 0, y: 1, z: 1 },
+            ],
+            triangles: vec![[0, 1, 2]],
+            normals: Vec::new(),
+            uvs: Vec::new(),
+        });
+        scene.objects[0].mesh = "high".into();
+        scene.objects[0].lods = vec!["low".into()];
+        scene
+    }
+
+    #[test]
+    fn lod_selection_is_deterministic_from_projected_size() {
+        let scene = lod_scene();
+        let mut textures = std::collections::BTreeMap::new();
+        textures.insert("albedo".into(), vec![0; 4]);
+        let far = scene_batches(&scene, &textures, PhysicalSize::new(1280, 720)).unwrap();
+        assert_eq!(far.triangles, 1);
+        assert_eq!(far.batches.len(), 1);
+        assert_eq!(far.batches[0].indices.len(), 3);
+
+        let mut near_scene = scene;
+        near_scene.objects[0].transform.scale = [20_000; 3];
+        let near = scene_batches(&near_scene, &textures, PhysicalSize::new(1280, 720)).unwrap();
+        assert_eq!(near.triangles, 2);
+        assert_eq!(near.batches.len(), 1);
+        assert_eq!(near.batches[0].indices.len(), 6);
     }
 
     #[test]
