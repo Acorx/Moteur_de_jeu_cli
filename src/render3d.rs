@@ -370,6 +370,7 @@ pub struct ExpandedMeshTriangle3d {
     pub normals: Option<[[i32; 3]; 3]>,
     pub uvs: Option<[[i32; 2]; 3]>,
     pub texture: Option<String>,
+    pub object: Option<String>,
     pub transform: Transform3d,
 }
 
@@ -423,6 +424,7 @@ pub fn expanded_mesh_triangles(scene: &Scene3d) -> Result<Vec<ExpandedMeshTriang
             normals: None,
             uvs: None,
             texture: None,
+            object: None,
             transform: Transform3d::default(),
         })
         .collect::<Vec<_>>();
@@ -471,6 +473,7 @@ pub fn expanded_mesh_triangles(scene: &Scene3d) -> Result<Vec<ExpandedMeshTriang
                 normals,
                 uvs,
                 texture: material.base_color_texture.clone(),
+                object: Some(object.id.clone()),
                 transform: object.transform,
             });
             if result.len() > MAX_TRIANGLES {

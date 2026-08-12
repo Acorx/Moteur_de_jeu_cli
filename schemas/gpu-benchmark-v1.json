@@ -4,7 +4,7 @@
   "title": "Aetherion GPU benchmark report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "status", "width", "height", "frames_rendered", "triangles", "elapsed_ms", "fps_milli", "adapter"],
+  "required": ["schema", "status", "width", "height", "frames_rendered", "triangles", "objects", "culled_objects", "draw_calls", "elapsed_ms", "fps_milli", "adapter"],
   "properties": {
     "schema": { "const": "aetherion.gpu-benchmark/v1" },
     "status": { "const": "completed" },
@@ -12,6 +12,9 @@
     "height": { "type": "integer", "minimum": 1 },
     "frames_rendered": { "type": "integer", "minimum": 0, "maximum": 1000000 },
     "triangles": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "objects": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "culled_objects": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "draw_calls": { "type": "integer", "minimum": 0, "maximum": 100000 },
     "elapsed_ms": { "type": "integer", "minimum": 0 },
     "fps_milli": { "type": "integer", "minimum": 0 },
     "adapter": { "type": "string", "minLength": 1, "maxLength": 256 }

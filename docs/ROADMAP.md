@@ -104,7 +104,7 @@ Chaque sous-système doit publier ses quotas, formats et tests de déterminisme.
 
 **Présent et couvert :** feature Cargo `render-gpu` optionnelle avec `wgpu 0.19`, `winit 0.29`, `glam`, `bytemuck` et `pollster`. La commande `gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] [--frames N]` charge une `Scene3d` validée, résout les assets existants et ouvre une fenêtre temps réel. `--frames` borne l'exécution et publie le rapport versionné `aetherion.gpu-demo/v1`. La commande `gpu-benchmark --scene FILE --frames N` réutilise cette boucle et publie `aetherion.gpu-benchmark/v1` avec adaptateur, temps mural et FPS millième.
 
-Le pipeline sélectionne l'adaptateur compatible, configure la surface en sRGB avec présentation FIFO lorsque disponible, crée un pipeline de triangles colorés, consomme les normales/UV optionnels des meshes avec fallback flat-shading, et applique un éclairage directionnel/ambiant simple. Il utilise une caméra orthographique dérivée de `Camera3d`, un depth buffer `Depth24Plus`, et gère redimensionnement/perte de surface/épuisement mémoire. Les sommets GPU sont des copies `f32` d'un snapshot de scène ; le renderer ne possède aucun accès mutable à la simulation.
+Le pipeline sélectionne l'adaptateur compatible, configure la surface en sRGB avec présentation FIFO lorsque disponible, crée un pipeline de triangles colorés, consomme les normales/UV optionnels des meshes avec fallback flat-shading, applique un culling AABB orthographique des objets et un éclairage directionnel/ambiant simple. Il utilise une caméra orthographique dérivée de `Camera3d`, un depth buffer `Depth24Plus`, et gère redimensionnement/perte de surface/épuisement mémoire. Les sommets GPU sont des copies `f32` d'un snapshot de scène ; le renderer ne possède aucun accès mutable à la simulation.
 
 Le chemin headless par défaut reste compilable et exécutable sans dépendances GPU. Le rendu GPU n'est pas déterministe bit-à-bit et ne remplace ni `capture3d`, ni les captures CPU, ni les visual diffs. L'ADR [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md) fixe cette frontière.
 
@@ -123,6 +123,12 @@ Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validat
 **M12.5 présente :** `--cache-dir` pour `capture3d`, `gpu-demo` et `gpu-benchmark`. Le cache est versionné par type, checksum, format et importeur, publié atomiquement et toujours précédé d'une vérification du fichier source. Il est strictement hors des données déterministes et les erreurs de cache déclenchent un repli transparent.
 
 **Prochaines tranches M12 :** chargement asynchrone, import des textures glTF et matériaux textures plus riches avec quotas.
+
+## M15 — Préparation GPU et visibilité
+
+**M15.1 tranche présente :** le backend GPU calcule une AABB agrégée par objet après transformation entière, teste son intersection avec le volume orthographique et n'upload pas les objets entièrement hors champ. Les rapports `gpu-demo` et `gpu-benchmark` publient `objects`, `culled_objects`, `triangles` effectivement préparés et `draw_calls`. Cette tranche ne prétend pas encore fournir de l'instancing : la géométrie locale et l'instance buffer seront introduits séparément.
+
+**Prochaines tranches M15 :** géométrie locale réutilisable, instance buffers, réduction des draw calls, puis LOD et culling GPU.
 
 ## M8 — Tooling, build et packaging (futur)
 

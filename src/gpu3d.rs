@@ -13,6 +13,9 @@ pub struct RunSummary {
     pub height: u32,
     pub frames_rendered: u64,
     pub triangles: usize,
+    pub objects: usize,
+    pub culled_objects: usize,
+    pub draw_calls: usize,
 }
 
 pub const BENCHMARK_REPORT_SCHEMA: &str = "aetherion.gpu-benchmark/v1";
@@ -25,6 +28,9 @@ pub struct BenchmarkSummary {
     pub height: u32,
     pub frames_rendered: u64,
     pub triangles: usize,
+    pub objects: usize,
+    pub culled_objects: usize,
+    pub draw_calls: usize,
     pub elapsed_ms: u64,
     pub fps_milli: u64,
     pub adapter: String,
@@ -159,6 +165,9 @@ mod runtime {
         scene_size: PhysicalSize<u32>,
         background: [f32; 3],
         adapter: String,
+        objects: usize,
+        culled_objects: usize,
+        triangles: usize,
     }
 
     impl Renderer {
@@ -216,7 +225,8 @@ mod runtime {
             let config = surface_configuration(format, present_mode, alpha_mode, scene_size);
             surface.configure(&device, &config);
 
-            let batch_data = scene_batches(scene, texture_bytes)?;
+            let prepared = scene_batches(scene, texture_bytes, scene_size)?;
+            let batch_data = prepared.batches;
 
             let camera_uniform = CameraUniform {
                 view_projection: camera_matrix(scene.camera, scene_size).to_cols_array_2d(),
@@ -362,6 +372,9 @@ mod runtime {
                     .background
                     .map(|channel| f32::from(channel) / f32::from(u8::MAX)),
                 adapter: adapter_name,
+                objects: prepared.objects,
+                culled_objects: prepared.culled_objects,
+                triangles: prepared.triangles,
             })
         }
 
@@ -460,13 +473,31 @@ mod runtime {
     type TextureIndices = BTreeMap<Option<String>, usize>;
     type GpuTextureSet = (Vec<GpuTexture>, TextureIndices);
 
+    pub(super) struct PreparedScene {
+        pub(super) batches: Vec<BatchData>,
+        pub(super) objects: usize,
+        pub(super) culled_objects: usize,
+        pub(super) triangles: usize,
+    }
+
     pub(super) fn scene_batches(
         scene: &Scene3d,
         texture_bytes: &BTreeMap<String, Vec<u8>>,
-    ) -> Result<Vec<BatchData>> {
+        viewport: PhysicalSize<u32>,
+    ) -> Result<PreparedScene> {
         let triangles = render3d::expanded_mesh_triangles(scene)?;
+        let visible_objects = visible_objects(&triangles, scene.camera, viewport);
         let mut batches = BTreeMap::<Option<String>, BatchData>::new();
+        let mut rendered_triangles = 0;
         for expanded in triangles {
+            if expanded
+                .object
+                .as_ref()
+                .is_some_and(|id| !visible_objects.contains(id))
+            {
+                continue;
+            }
+            rendered_triangles += 1;
             let texture = expanded.texture.clone();
             if let Some(id) = texture.as_ref()
                 && !texture_bytes.contains_key(id)
@@ -515,7 +546,57 @@ mod runtime {
             }
             batch.indices.extend([base, base + 1, base + 2]);
         }
-        Ok(batches.into_values().collect())
+        let objects = scene.objects.len();
+        Ok(PreparedScene {
+            batches: batches.into_values().collect(),
+            objects,
+            culled_objects: objects.saturating_sub(visible_objects.len()),
+            triangles: rendered_triangles,
+        })
+    }
+
+    fn visible_objects(
+        triangles: &[render3d::ExpandedMeshTriangle3d],
+        camera: Camera3d,
+        viewport: PhysicalSize<u32>,
+    ) -> std::collections::BTreeSet<String> {
+        let mut bounds = BTreeMap::<String, ([f32; 3], [f32; 3])>::new();
+        for expanded in triangles {
+            let Some(object) = expanded.object.as_ref() else {
+                continue;
+            };
+            let entry = bounds
+                .entry(object.clone())
+                .or_insert(([f32::MAX; 3], [f32::MIN; 3]));
+            for vertex in expanded.triangle.vertices {
+                let point = [vertex.x as f32, vertex.y as f32, vertex.z as f32];
+                for (axis, coordinate) in point.into_iter().enumerate() {
+                    entry.0[axis] = entry.0[axis].min(coordinate);
+                    entry.1[axis] = entry.1[axis].max(coordinate);
+                }
+            }
+        }
+        let scale = camera.pixels_per_unit.max(1) as f32;
+        let half_width = viewport.width.max(1) as f32 / scale / 2.0;
+        let half_height = viewport.height.max(1) as f32 / scale / 2.0;
+        let min_x = camera.x as f32 - half_width;
+        let max_x = camera.x as f32 + half_width;
+        let min_y = camera.y as f32 - half_height;
+        let max_y = camera.y as f32 + half_height;
+        let min_z = camera.z as f32 + MIN_DEPTH;
+        let max_z = camera.z as f32 + MAX_DEPTH;
+        bounds
+            .into_iter()
+            .filter_map(|(id, (min, max))| {
+                let intersects = max[0] >= min_x
+                    && min[0] <= max_x
+                    && max[1] >= min_y
+                    && min[1] <= max_y
+                    && max[2] >= min_z
+                    && min[2] <= max_z;
+                intersects.then_some(id)
+            })
+            .collect()
     }
 
     fn create_gpu_textures(
@@ -756,6 +837,9 @@ mod runtime {
             height: summary.height,
             frames_rendered: summary.frames_rendered,
             triangles: summary.triangles,
+            objects: summary.objects,
+            culled_objects: summary.culled_objects,
+            draw_calls: summary.draw_calls,
             elapsed_ms,
             fps_milli,
             adapter,
@@ -774,7 +858,7 @@ mod runtime {
             return Err("render_gpu_dimensions_invalid".into());
         }
         let (scene, texture_bytes) = load_scene(scene_path, assets_path, cache_root)?;
-        let triangle_count = render3d::expanded_triangles(&scene)?.len();
+        let prepared = scene_batches(&scene, &texture_bytes, PhysicalSize::new(width, height))?;
         if max_frames == Some(0) {
             return Ok((
                 RunSummary {
@@ -783,7 +867,10 @@ mod runtime {
                     width,
                     height,
                     frames_rendered: 0,
-                    triangles: triangle_count,
+                    triangles: prepared.triangles,
+                    objects: prepared.objects,
+                    culled_objects: prepared.culled_objects,
+                    draw_calls: prepared.batches.len(),
                 },
                 "not-started".into(),
                 std::time::Duration::ZERO,
@@ -803,6 +890,10 @@ mod runtime {
         );
         let mut renderer = pollster::block_on(Renderer::new(&window, &scene, &texture_bytes))?;
         let adapter = renderer.adapter.clone();
+        let objects = renderer.objects;
+        let culled_objects = renderer.culled_objects;
+        let triangles = renderer.triangles;
+        let draw_calls = renderer.batches.len();
         let started = Instant::now();
         let frames_rendered = Arc::new(AtomicU64::new(0));
         let frames_for_loop = Arc::clone(&frames_rendered);
@@ -839,7 +930,10 @@ mod runtime {
                 width,
                 height,
                 frames_rendered: frames_rendered.load(Ordering::Relaxed),
-                triangles: triangle_count,
+                triangles,
+                objects,
+                culled_objects,
+                draw_calls,
             },
             adapter,
             started.elapsed(),
@@ -1006,18 +1100,38 @@ mod tests {
             objects: Vec::new(),
             animations: Vec::new(),
         };
-        let batches = scene_batches(&scene, &std::collections::BTreeMap::new()).unwrap();
-        assert!(batches.is_empty());
+        let prepared = scene_batches(
+            &scene,
+            &std::collections::BTreeMap::new(),
+            PhysicalSize::new(1280, 720),
+        )
+        .unwrap();
+        assert!(prepared.batches.is_empty());
     }
 
     #[test]
     fn textured_batches_require_and_retain_external_texture_assets() {
         let scene = textured_scene();
-        assert!(scene_batches(&scene, &std::collections::BTreeMap::new()).is_err());
+        assert!(
+            scene_batches(
+                &scene,
+                &std::collections::BTreeMap::new(),
+                PhysicalSize::new(1280, 720),
+            )
+            .is_err()
+        );
         let mut textures = std::collections::BTreeMap::new();
         textures.insert("albedo".into(), vec![0; 4]);
-        let batches = scene_batches(&scene, &textures).unwrap();
-        assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].texture.as_deref(), Some("albedo"));
+        let prepared = scene_batches(&scene, &textures, PhysicalSize::new(1280, 720)).unwrap();
+        assert_eq!(prepared.batches.len(), 1);
+        assert_eq!(prepared.batches[0].texture.as_deref(), Some("albedo"));
+        assert_eq!(prepared.objects, 1);
+        assert_eq!(prepared.culled_objects, 0);
+
+        let mut offscreen = scene;
+        offscreen.objects[0].transform.translation = [10_000, 0, 0];
+        let prepared = scene_batches(&offscreen, &textures, PhysicalSize::new(1280, 720)).unwrap();
+        assert_eq!(prepared.culled_objects, 1);
+        assert_eq!(prepared.triangles, 0);
     }
 }

@@ -4,13 +4,16 @@
   "title": "Aetherion GPU demo report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "status", "width", "height", "frames_rendered", "triangles"],
+  "required": ["schema", "status", "width", "height", "frames_rendered", "triangles", "objects", "culled_objects", "draw_calls"],
   "properties": {
     "schema": { "const": "aetherion.gpu-demo/v1" },
     "status": { "const": "completed" },
     "width": { "type": "integer", "minimum": 1 },
     "height": { "type": "integer", "minimum": 1 },
     "frames_rendered": { "type": "integer", "minimum": 0 },
-    "triangles": { "type": "integer", "minimum": 0, "maximum": 100000 }
+    "triangles": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "objects": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "culled_objects": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "draw_calls": { "type": "integer", "minimum": 0, "maximum": 100000 }
   }
 }
