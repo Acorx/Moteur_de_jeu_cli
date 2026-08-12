@@ -102,7 +102,7 @@ Chaque sous-système doit publier ses quotas, formats et tests de déterminisme.
 
 ## M11 — Premier pipeline GPU temps réel (tranche 1 présente)
 
-**Présent et couvert :** feature Cargo `render-gpu` optionnelle avec `wgpu 0.19`, `winit 0.29`, `glam`, `bytemuck` et `pollster`. La commande `gpu-demo --scene FILE [--assets FILE] [--width N] [--height N]` charge une `Scene3d` validée, résout les assets existants et ouvre une fenêtre temps réel.
+**Présent et couvert :** feature Cargo `render-gpu` optionnelle avec `wgpu 0.19`, `winit 0.29`, `glam`, `bytemuck` et `pollster`. La commande `gpu-demo --scene FILE [--assets FILE] [--width N] [--height N] [--frames N]` charge une `Scene3d` validée, résout les assets existants et ouvre une fenêtre temps réel. `--frames` borne l'exécution et publie le rapport versionné `aetherion.gpu-demo/v1`, ce qui fournit un point d'intégration pour les smoke tests et benchmarks.
 
 Le pipeline sélectionne l'adaptateur compatible, configure la surface en sRGB avec présentation FIFO lorsque disponible, crée un pipeline de triangles colorés, une caméra orthographique dérivée de `Camera3d`, un depth buffer `Depth24Plus`, et gère redimensionnement/perte de surface/épuisement mémoire. Les sommets GPU sont des copies `f32` d'un snapshot de scène ; le renderer ne possède aucun accès mutable à la simulation.
 

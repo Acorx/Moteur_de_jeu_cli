@@ -66,7 +66,7 @@ Le pipeline temps reel est optionnel et n'est pas une extension du chemin determ
 
 `gpu-demo` charge une `Scene3d` validee, resout optionnellement le meme manifeste `--assets` que `capture3d`, puis construit un snapshot de presentation immuable. Les triangles sont convertis explicitement des coordonnees entieres vers des sommets `f32`; aucune donnee GPU ne revient vers `World` ou la simulation. La camera conserve actuellement la semantique orthographique `pixels_per_unit` du format historique.
 
-Le backend initialise une surface, choisit un format sRGB et le mode FIFO lorsque le pilote le propose, puis rend un pipeline de triangles colores avec depth buffer `Depth24Plus`. Les erreurs de surface sont classees (`Lost`, `Outdated`, `Timeout`, `OutOfMemory`) et la boucle redimensionne la surface sans interrompre la simulation. Ce rendu n'est pas une preuve de determinisme et ne remplace pas les captures CPU.
+Le backend initialise une surface, choisit un format sRGB et le mode FIFO lorsque le pilote le propose, puis rend un pipeline de triangles colores avec depth buffer `Depth24Plus`. Les erreurs de surface sont classees (`Lost`, `Outdated`, `Timeout`, `OutOfMemory`) et la boucle redimensionne la surface sans interrompre la simulation. `--frames N` borne la boucle a un million de frames maximum et publie `aetherion.gpu-demo/v1` avec dimensions, nombre de frames effectivement presentees et triangles. Ce rendu n'est pas une preuve de determinisme et ne remplace pas les captures CPU.
 
 La decision complete est documentee dans [`docs/adr/0001-frontiere-rendu-gpu.md`](adr/0001-frontiere-rendu-gpu.md). Les prochaines extensions doivent conserver cette frontiere avant d'ajouter textures, glTF, animation GPU, culling ou physique de presentation.
 

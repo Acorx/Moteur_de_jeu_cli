@@ -1,12 +1,26 @@
+use serde::Serialize;
 use std::path::Path;
 
 use crate::Result;
+
+pub const REPORT_SCHEMA: &str = "aetherion.gpu-demo/v1";
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RunSummary {
+    pub schema: &'static str,
+    pub status: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub frames_rendered: u64,
+    pub triangles: usize,
+}
 
 #[cfg(feature = "render-gpu")]
 mod runtime {
     use std::mem::size_of;
     use std::path::Path;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use bytemuck::{Pod, Zeroable};
     use glam::Mat4;
@@ -17,6 +31,7 @@ mod runtime {
     use winit::window::{Window, WindowBuilder};
 
     use crate::Result;
+    use crate::gpu3d::RunSummary;
     use crate::render3d::{self, Camera3d, Scene3d};
 
     const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -247,7 +262,7 @@ mod runtime {
                 pipeline,
                 vertex_buffer,
                 index_buffer,
-                index_count: indices.len() as u32,
+                index_count: u32::try_from(indices.len()).map_err(|_| "render_gpu_index_quota")?,
                 camera_buffer,
                 camera_bind_group,
                 depth,
@@ -385,7 +400,8 @@ mod runtime {
         assets_path: Option<&Path>,
         width: u32,
         height: u32,
-    ) -> Result<()> {
+        max_frames: Option<u64>,
+    ) -> Result<RunSummary> {
         if width == 0 || height == 0 {
             return Err("render_gpu_dimensions_invalid".into());
         }
@@ -397,6 +413,20 @@ mod runtime {
             render3d::load(scene_path)?
         };
         render3d::validate(&scene)?;
+        let triangle_count = render3d::expanded_triangles(&scene)?.len();
+        if max_frames == Some(0) {
+            return Ok(RunSummary {
+                schema: super::REPORT_SCHEMA,
+                status: "completed",
+                width,
+                height,
+                frames_rendered: 0,
+                triangles: triangle_count,
+            });
+        }
+        if max_frames.is_some_and(|frames| frames > 1_000_000) {
+            return Err("render_gpu_frames_quota: plafond 1000000".into());
+        }
         let event_loop =
             EventLoop::new().map_err(|error| format!("render_gpu_event_loop: {error}"))?;
         let window = Arc::new(
@@ -407,6 +437,8 @@ mod runtime {
                 .map_err(|error| format!("render_gpu_window: {error}"))?,
         );
         let mut renderer = pollster::block_on(Renderer::new(&window, &scene))?;
+        let frames_rendered = Arc::new(AtomicU64::new(0));
+        let frames_for_loop = Arc::clone(&frames_rendered);
         event_loop
             .run(move |event, target| match event {
                 Event::WindowEvent { event, window_id } if window_id == window.id() => {
@@ -414,7 +446,12 @@ mod runtime {
                         WindowEvent::CloseRequested => target.exit(),
                         WindowEvent::Resized(size) => renderer.resize(size),
                         WindowEvent::RedrawRequested => match renderer.render() {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                let rendered = frames_for_loop.fetch_add(1, Ordering::Relaxed) + 1;
+                                if max_frames.is_some_and(|limit| rendered >= limit) {
+                                    target.exit();
+                                }
+                            }
                             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                                 renderer.resize(renderer.scene_size)
                             }
@@ -428,7 +465,14 @@ mod runtime {
                 _ => {}
             })
             .map_err(|error| format!("render_gpu_event_loop: {error}"))?;
-        Ok(())
+        Ok(RunSummary {
+            schema: super::REPORT_SCHEMA,
+            status: "completed",
+            width,
+            height,
+            frames_rendered: frames_rendered.load(Ordering::Relaxed),
+            triangles: triangle_count,
+        })
     }
 
     const SHADER: &str = r#"
@@ -465,12 +509,24 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 #[cfg(feature = "render-gpu")]
-pub fn run(scene: &Path, assets: Option<&Path>, width: u32, height: u32) -> Result<()> {
-    runtime::run(scene, assets, width, height)
+pub fn run(
+    scene: &Path,
+    assets: Option<&Path>,
+    width: u32,
+    height: u32,
+    max_frames: Option<u64>,
+) -> Result<RunSummary> {
+    runtime::run(scene, assets, width, height, max_frames)
 }
 
 #[cfg(not(feature = "render-gpu"))]
-pub fn run(_scene: &Path, _assets: Option<&Path>, _width: u32, _height: u32) -> Result<()> {
+pub fn run(
+    _scene: &Path,
+    _assets: Option<&Path>,
+    _width: u32,
+    _height: u32,
+    _max_frames: Option<u64>,
+) -> Result<RunSummary> {
     Err("render_gpu_feature_disabled: compilez avec --features render-gpu".into())
 }
 
