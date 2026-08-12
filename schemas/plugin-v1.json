@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/plugin-v1.json",
+  "title": "Aetherion manifest-only plugin v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "version", "abi", "capabilities", "quotas"],
+  "properties": {
+    "schema": { "const": "aetherion.plugin/v1" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}$" },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "abi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["major", "minimum_host_minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "minimum_host_minor": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 4,
+      "items": { "enum": ["asset_read", "scene_read", "simulation_read", "telemetry_write"] }
+    },
+    "quotas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "fuel", "io_read_bytes", "io_write_bytes", "files"],
+      "properties": {
+        "memory_bytes": { "type": "integer", "minimum": 1, "maximum": 268435456 },
+        "fuel": { "type": "integer", "minimum": 1, "maximum": 1000000000 },
+        "io_read_bytes": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+        "io_write_bytes": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+        "files": { "type": "integer", "minimum": 0, "maximum": 1024 }
+      }
+    }
+  }
+}

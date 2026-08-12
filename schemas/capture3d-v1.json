@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/capture3d-v1.json",
+  "title": "Aetherion 3D capture manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "scene_schema", "width", "height", "triangles", "visible_pixels"],
+  "properties": {
+    "schema": { "const": "aetherion.capture3d/v1" },
+    "scene_schema": { "const": "aetherion.scene3d/v1" },
+    "width": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+    "height": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+    "triangles": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "visible_pixels": { "type": "integer", "minimum": 0, "maximum": 16777216 },
+    "animation": { "type": "string", "minLength": 1 },
+    "tick": { "type": "integer", "minimum": 0 },
+    "channels": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "file", "encoding"],
+        "properties": {
+          "name": { "enum": ["depth", "normals", "segmentation"] },
+          "file": { "type": "string", "minLength": 1 },
+          "encoding": { "enum": ["pgm-p5-u16be", "ppm-p6-rgb8", "ppm-p6-rgb24-id"] }
+        }
+      }
+    },
+    "segmentation_mapping": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "triangle_id", "source", "rank"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 1, "maximum": 16777215 },
+          "triangle_id": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+          "source": { "type": "string" },
+          "rank": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+        }
+      }
+    }
+  }
+}

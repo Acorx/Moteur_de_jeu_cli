@@ -4,6 +4,20 @@
 
 Aetherion est un moteur CLI headless dont les sorties observables sont reproductibles. La simulation, les transformations, le rendu logiciel, les tolerances et les checksums utilisent des entiers, des ordres canoniques et des formats versionnes. Aucun flottant n'entre dans le chemin deterministe.
 
+## Runtime WebAssembly M5-C0
+
+Le runtime `plugin_runtime` est compile uniquement avec la feature Cargo `plugin-runtime` et repose sur l'interpreteur `wasmi 0.32.3`. Le build par defaut ne depend donc pas de WebAssembly. C0 instancie les modules avec un `Linker` vide, sans import hote ni WASI, puis appelle un export `aetherion_main` de signature `() -> i32`. Les erreurs de lecture, compilation, instanciation, demarrage, export et trap sont converties en prefixes stables `plugin_runtime_*`.
+
+Cette couche ne lit encore aucun manifeste ni capacite. C1 applique deja `fuel` via `Config::consume_fuel`/`Store::set_fuel` et la memoire via `StoreLimitsBuilder`, avec classification deterministe des depassements. Les quotas sont encore fournis directement par `RuntimeLimits`; leur projection depuis `PluginManifest` et l'API hote arrivent en C2. IO, reseau, CLI et rapport versionne restent respectivement C3, C4 et C5.
+
+## Fondations du module de physique 2D M7-A
+
+Le format projet et les scenes acceptent un `collider` optionnel par entite. Il declare des demi-tailles entieres strictement positives, une masse en milli-unites, une restitution comprise entre `0` et `1000`, et `is_static`. L'absence de collider preserve les projets existants.
+
+L'ECS stocke les colliders dans une `BTreeMap<EntityId, Collider>`, independamment des positions et velocites. L'ordonnanceur expose l'ordre canonique `input`, `movement`, `physics` et rejette les ordres incomplets, dupliques ou incompatibles. Le systeme `physics` visite les colliders dans l'ordre des `EntityId`, detecte les paires AABB par force brute, choisit l'axe de penetration minimale (X en cas d'egalite), separe les corps avec des corrections entieres et applique une reponse de vitesse a restitution milli-unitaire. Les corps statiques ne bougent jamais.
+
+Les colliders sont exposes dans les snapshots lorsqu'ils existent. La telemetrie ajoute `collisions_resolved` et `entities_modified` pour `physics`. Les checksums des projets historiques sans collider restent inchanges, car le champ optionnel est absent de leur serialisation.
+
 ## Module d'animation 3D
 
 Le module `render3d` etend `aetherion.scene3d/v1` avec des clips optionnels. Un clip possede un identifiant, une duree entiere en ticks, un mode boucle ou non boucle et des pistes ciblant chacune un objet 3D. Les keyframes sont strictement ordonnees et portent un transform entier : echelle au millieme, rotations en millidegres limitees aux quarts de tour et translation entiere.

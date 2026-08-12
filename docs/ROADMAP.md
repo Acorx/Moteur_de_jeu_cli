@@ -1,6 +1,10 @@
 # Feuille de route
 
-Les jalons ci-dessous décrivent une trajectoire, pas des fonctionnalités présentes.
+## Vision et règles de décision
+
+Aetherion vise un moteur CLI/agent-native de classe production, modulaire et extensible. La convergence vers les capacités d'un moteur généraliste est une trajectoire longue, pas une promesse de parité. Chaque incrément doit rester headless-first, déterministe et borné, sûr par défaut, observable par formats machine-readable versionnés, et rétrocompatible avec les projets, snapshots, replays et commandes publiés.
+
+Les jalons ci-dessous décrivent une trajectoire, pas des fonctionnalités présentes. Une fonction n'est considérée présente que lorsqu'elle est documentée comme terminée, couverte par des tests et exposée par la CLI ou l'API publique.
 
 ## M0 — Socle CLI (terminé)
 
@@ -43,25 +47,67 @@ Scénarios JSON v1, événements déterministes réutilisés, assertions par tic
 - intégration agent `capture.create` PNG et `capture.multi` dry-run/transactionnel ;
 - mode headless, commandes, snapshots et checksums M0–M2 conservés.
 
-## M4 — Rendu étendu (en cours)
+## M4 — Rendu étendu (terminé)
 
-- terminé : captures 2D profondeur/normales/segmentation et comparaison visuelle automatisée avec tolérances entières ;
-- sous-étape 3D actuelle terminée : scènes strictes `aetherion.scene3d/v1`, triangles historiques rétrocompatibles, meshes/matériaux/objets réutilisables, transformations entières, projection orthographique/z-buffer et commande headless `aetherion capture3d --scene FILE --output FILE [--width N] [--height N]` produisant un PPM et son manifeste atomiquement ;
-- conventions actuelles : échelle `1000` = 1, ordre échelle → Rx → Ry → Rz → translation, rotations en millidegrés limitées aux multiples de `90000`, opacité entière `0..1000`, ordre canonique et quotas stricts (1 MiB, 10 000 meshes/matériaux, 100 000 objets/triangles, 300 000 sommets, 16 777 216 pixels) ;
-- terminé : animation 3D déterministe par clips, pistes et keyframes entières, échantillonnage en escalier, boucle ou maintien final, sélection CLI par `--animation` et `--ticks` ;
-- terminé (M4-F) : ressources 3D externes strictes mesh/material, confinement, quotas, taille/checksum, chargement concurrent avec collecte canonique, résolution `capture3d --assets` et import atomique `asset3d-import` ;
-- terminé (M4-G) : canaux 3D couleur, profondeur PGM P5, normales PPM P6 et segmentation PPM P6, manifestes et publication atomique ;
-- terminé (M4-H) : diff 3D intégré par manifestes, tolérances indépendantes, résumé déterministe des IDs/mappings de segmentation, rapport atomique et codes 0/1/2 ;
-- restant : clôture et validation globale du jalon étendu. M4 reste donc en cours.
+- captures 2D profondeur/normales/segmentation, comparaison visuelle à tolérances entières et défaut couleur historique préservé ;
+- scènes 3D strictes, transformations et animations entières, projection/z-buffer logiciel, ressources externes confinées et chargées canoniquement ;
+- canaux 3D couleur/profondeur/normales/segmentation, publication atomique et diff 3D intégré avec rapport déterministe ;
+- clôture certifiée par `cargo run -- certify-m4 --report docs/m4-certification.json` : rapport `aetherion.m4-certification/v1` stable, schéma publié, test d’intégration de reproductibilité/atomicité et matrice M0–M4 verte ;
+- contrats conservés : codes 0/1/2/3, formats historiques, ordre canonique, quotas et absence de dépendance lourde.
 
-## M5 — Plugins et durcissement
+## M5 — Plateforme de plugins sécurisée (premières tranches présentes)
 
-- ABI/API versionnée ;
-- plugins sandboxés par capacités, idéalement WebAssembly ;
-- signatures, manifeste de permissions et registre de provenance ;
-- limites CPU/mémoire/IO, politique réseau restrictive ;
-- fuzzing des formats, revue de supply-chain et réponse aux vulnérabilités.
+**M5-A présent et couvert :** manifeste JSON strict `aetherion.plugin/v1`, ABI hôte `1.1`, politique de compatibilité mineure testée sur les hôtes `1.0` et `1.1`, identifiant et version validés, capacités déclaratives limitées, quotas mémoire/fuel/IO/fichiers, refus des doublons et ABI incompatibles, chargement déterministe d'un catalogue (maximum 256 manifestes) et commandes `plugin validate`, `plugin inspect`, `plugin list`.
+
+**M5-B présent et couvert :** `plugin resolve` publie atomiquement le lockfile versionné `aetherion.plugin-lock/v1`, canoniquement trié par identifiant, avec chemins relatifs, ABI, capacités, version et checksum FNV-1a. `plugin lock-check` recalcule ces données et retourne le code 1 avec rapport JSON en cas de divergence. Le test d'intégration `tests/plugin_lock.rs` vérifie la stabilité, l'acceptation et la détection d'une modification de checksum.
+
+Cette tranche reste **manifest-only** pour les commandes de catalogue : aucun plugin ne peut encore être lancé depuis la CLI.
+
+**M5-C0 présent et couvert :** la feature optionnelle `plugin-runtime` embarque `wasmi 0.32.3`, instancie un module avec un linker vide et appelle `aetherion_main: () -> i32`. Le build par défaut reste sans runtime WebAssembly; les modules invalides, exports absents et traps produisent des erreurs `plugin_runtime_*` stables.
+
+**M5-C1 présent et couvert :** `RuntimeLimits` applique réellement `fuel` et `memory_bytes`, mesure le fuel consommé et distingue les dépassements fuel/mémoire. Les tests vérifient la reproductibilité, la boucle bornée et `memory.grow` refusé.
+
+**M5-C2 présent et couvert :** le module d'import versionné `aetherion_v1` expose uniquement les fonctions autorisées par `asset_read`, `scene_read`, `simulation_read` et `telemetry_write`. Les vues de monde/scène/assets sont des copies validées, les imports non hôte et les capacités absentes sont refusés avant instanciation, et la télémétrie reste dans un tampon mémoire borné. Les tests couvrent lecture, absence de capacité, lecture seule, confinement logique des assets, import non hôte et déterminisme.
+
+**M5-C3 présent et couvert :** les quotas `io_read_bytes` et `files` sont appliqués aux imports d'assets avant et pendant l'exécution. Les dépassements produisent `plugin_runtime_io_read_quota` ou `plugin_runtime_files_quota`; `ExecutionReport.io` publie les compteurs déterministes. Aucun import d'écriture n'est exposé, donc `io_write_bytes` reste nul par construction. Les tests couvrent quota autorisé, dépassement de lecture et dépassement de fichiers.
+
+**Étapes futures mesurables :**
+
+1. C4 : verrouiller l'interdiction réseau ;
+2. C5 : ajouter `plugin run`, dry-run et rapport atomique ;
+3. C6 : golden tests, fuzzing des frontières, provenance, signatures et audit supply-chain.
+
+## M6 — Scripting déterministe (tranches A/B présentes)
+
+**M6-A présent et couvert :** `script-run` interprète un format JSON strict `aetherion.script/v1`, avec substitutions `{{variable}}`, commandes bornées sans shell ni processus externe (`true`, `false`, `echo`, `noop`), dry-run et budgets de commandes/ticks. Les dépassements retournent le code 3.
+
+**M6-B présent et couvert :** les politiques `stop`/`continue`, les échecs au code 1 et le rapport atomique versionné `aetherion.script-report/v1` sont couverts par `tests/script_run.rs`.
+
+Ce n'est pas une VM ni un langage de scripting général : aucun script ne participe encore à la simulation, aux snapshots ou aux replays. Une VM sandboxée avec API versionnée, budgets d'instructions/mémoire et absence d'horloge/IO/réseau implicite reste future.
+
+## M7 — Scène, physique, audio et rendu (premières fondations présentes)
+
+**M7-A présent et couvert :** composant `collider` optionnel dans les projets/scènes, stockage ECS dédié, détection AABB canonique, séparation entière, réponse de vitesse à restitution milli-unitaire, corps statiques et télémétrie (`collisions_resolved`, `entities_modified`) dans le système `physics`. Les projets sans collider conservent leur comportement de simulation historique.
+
+- scène : hiérarchie et préfabs versionnés avec migration et tests golden ;
+- physique : détection/résolution 2D à pas fixe, collisions reproductibles et corpus de conformance ;
+- audio : graphe offline/headless testable avant sortie temps réel optionnelle ;
+- rendu : matériaux, éclairage et pipelines plus riches derrière interfaces stables, sans faire dépendre la simulation du GPU.
+
+Chaque sous-système doit publier ses quotas, formats et tests de déterminisme. Il n'existe aujourd'hui ni physique avancée/3D ni audio généralistes, ni rendu AAA.
+
+## M8 — Tooling, build et packaging (futur)
+
+CI multi-plateforme, artefacts signés, SBOM, vérification des schémas/migrations, profils de build headless minimaux, cache déterministe et installateur/versionnement documentés. Cible mesurable : installation propre, exécution des smoke tests et désinstallation automatisées sur chaque plateforme supportée.
+
+## M9 — Réseau (futur)
+
+Commencer par protocoles explicites et simulation réseau testable (latence/perte), puis réplication autoritaire et rollback si les invariants déterministes sont démontrés. Chiffrement, authentification, quotas et résistance aux entrées hostiles sont des prérequis. Aucun multijoueur n'est présent.
+
+## M10 — Éditeur optionnel et écosystème (futur)
+
+L'éditeur restera un client optionnel des mêmes contrats CLI/API, jamais une dépendance du runtime headless. Avant tout registre public : format de paquet stable, provenance/signatures, compatibilité résolue hors ligne, revue et révocation. Exemples, templates et SDK agents versionnés précéderont une éventuelle place de marché.
 
 ## Hors objectif immédiat
 
-Éditeur visuel complet, rendu AAA, marketplace et compatibilité générale avec les grands moteurs. Chaque extension devra préserver le binaire headless, le déterminisme observable et les contrats agent-native.
+Parité rapide avec les moteurs généralistes, éditeur visuel complet, rendu AAA et marketplace. Chaque extension devra préserver le binaire headless, le déterminisme observable, la sécurité par défaut et les contrats agent-native.

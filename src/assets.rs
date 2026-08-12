@@ -105,6 +105,11 @@ pub struct AssetManager {
 
 impl AssetManager {
     pub fn load(root: &Path, manifest: Option<&Path>) -> Result<Self> {
+        let root_metadata = fs::symlink_metadata(root)
+            .map_err(|e| format!("asset_root_invalid: {}: {e}", root.display()))?;
+        if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+            return Err("asset_root_not_directory_or_symlink".into());
+        }
         let root = root
             .canonicalize()
             .map_err(|e| format!("asset_root_invalid: {}: {e}", root.display()))?;
@@ -226,6 +231,38 @@ impl AssetManager {
         self.loaded_bytes = next;
         self.textures.extend(loaded.clone());
         Ok(loaded)
+    }
+
+    /// Lit les octets d'un asset déclaré, après réapplication du confinement,
+    /// de la taille et du checksum du manifeste.
+    pub fn read_bytes(&self, id: &str) -> Result<Vec<u8>> {
+        let entry = self
+            .entries
+            .get(id)
+            .ok_or_else(|| format!("asset_unknown: {id}"))?;
+        let path = confined(&self.root, Path::new(&entry.path), true)?;
+        let bytes = fs::read(&path).map_err(|e| format!("asset_read: {}: {e}", path.display()))?;
+        if bytes.len() as u64 != entry.size {
+            return Err(format!(
+                "asset_size_mismatch: {id}: attendu {}, obtenu {}",
+                entry.size,
+                bytes.len()
+            )
+            .into());
+        }
+        let actual = checksum_bytes(&bytes);
+        if actual != entry.checksum {
+            return Err(format!(
+                "asset_checksum_mismatch: {id}: attendu {}, obtenu {actual}",
+                entry.checksum
+            )
+            .into());
+        }
+        Ok(bytes)
+    }
+
+    pub fn asset_ids(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
     }
 
     pub fn resolved(
@@ -358,6 +395,25 @@ fn confined(root: &Path, requested: &Path, must_exist: bool) -> Result<PathBuf> 
         return Err("asset_path_traversal: chemin relatif confiné requis".into());
     }
     let candidate = root.join(requested);
+    let mut current = root.to_path_buf();
+    for component in requested.components() {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!("asset_path_symlink: {}", current.display()).into());
+            }
+            Ok(_) => {}
+            Err(error) if !must_exist && error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(candidate);
+            }
+            Err(error) => {
+                return Err(format!("asset_path_invalid: {}: {error}", current.display()).into());
+            }
+        }
+    }
     if must_exist {
         let canonical = candidate
             .canonicalize()

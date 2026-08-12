@@ -1,6 +1,6 @@
 # Aetherion
 
-Aetherion est un **premier socle de moteur de jeu CLI ultra-léger**, pensé pour les agents autonomes. Le MVP est headless, déterministe et inspectable. Il ne prétend pas concurrencer un moteur généraliste : rendu, éditeur et écosystème restent des jalons futurs.
+Aetherion est un **socle de moteur de jeu CLI/agent-native**, headless, déterministe et inspectable. Le projet vise à long terme une qualité de production, une architecture modulaire et une extensibilité sûre vers certaines capacités d'un moteur généraliste, sans promettre de parité rapide. La sécurité par défaut, les formats versionnés et la rétrocompatibilité restent des contraintes structurantes ; physique, audio, réseau, scripting exécutable, éditeur complet et écosystème public sont des jalons futurs.
 
 ## Démarrage rapide
 
@@ -23,8 +23,17 @@ cargo run -- replay-run --path ./demo --replay ./demo/demo.replay.json
 cargo run -- diff --left ./demo/capture.ppm.json --right ./demo/capture.ppm.json
 cargo run -- visual-diff --baseline ./demo/baseline.png --candidate ./demo/capture.png --max-channel-delta 2 --max-different-pixels 10 --max-different-percent-milli 50 --report ./demo/visual-diff.json
 cargo run -- visual-diff3d --baseline-manifest ./demo/baseline.ppm.json --candidate-manifest ./demo/capture3d.ppm.json --report ./demo/visual-diff3d.json
+cargo run -- certify-m4 --report ./docs/m4-certification.json
 cargo run -- scenario-run --path ./demo --scenario ./demo/scenario-pass.json --report ./demo/scenario-report.json --audit ./demo/audit.jsonl
 cargo run -- schema list
+cargo run -- plugin validate ./plugins/example.plugin.json
+cargo run -- plugin inspect ./plugins/example.plugin.json
+cargo run -- plugin list ./plugins
+cargo run -- plugin resolve --dir ./plugins --lockfile ./demo/aetherion.plugin-lock.json
+cargo run -- plugin lock-check --dir ./plugins --lockfile ./demo/aetherion.plugin-lock.json
+cargo run -- script-run --script ./demo/script.json --dry-run --report ./demo/script-report.json
+cargo run -- bundle --path ./demo --output ./demo/game.bundle.zip
+cargo run -- bundle-inspect --input ./demo/game.bundle.zip
 cargo run -- agent --path ./demo --root . < ./demo/agent-exchange.jsonl
 ```
 
@@ -37,13 +46,14 @@ Sous Windows, le binaire release se trouve dans `target/release/aetherion.exe`.
 ## MVP actuel
 
 - M2 : protocole local JSONL strict, session isolée, transactions/dry-run, révisions, capacités, quotas, confinement et staging atomique ;
+- M5-C0/C1/C2/C3 : runtime WebAssembly optionnel derrière `plugin-runtime`, fuel/mémoire/IO/fichiers bornés, API hôte `aetherion_v1` activée uniquement par capacités, sans WASI ni imports système implicites ;
 - schémas JSON versionnés exposés par `schema list/show` et diff sémantique canonique ;
 - dix-sept sous-commandes, dont `agent`, `schema`, `scene` et le prototype `capture3d`, en conservant les commandes historiques ;
 - scénarios JSON v1, assertions détaillées, budgets stricts, rapport machine-readable atomique et audit JSONL append-only ;
-- stockage ECS réel et séparé (`EntityMetadata`, `Position`, `Velocity`, `Appearance`) fondé sur des `BTreeMap`, avec itération canonique par `EntityId` ;
-- ordonnanceur explicite et inspectable, ordre stable `input` puis `movement`, avec rejet des systèmes inconnus, doublons et dépendances impossibles ;
+- stockage ECS réel et séparé (`EntityMetadata`, `Position`, `Velocity`, `Appearance`, `Collider` optionnel) fondé sur des `BTreeMap`, avec itération canonique par `EntityId` ;
+- ordonnanceur explicite et inspectable, ordre stable `input` puis `movement` puis `physics`, avec rejet des systèmes inconnus, doublons et dépendances impossibles ;
 - PRNG SplitMix64 entier, reproductible sur toutes les plateformes, initialisé par `simulation.seed`, état sérialisable/restaurable et API opt-in qui ne change pas les scènes historiques ;
-- télémétrie JSON `aetherion.telemetry/v1` via `run --telemetry FILE` : tick/checksum, ordre des systèmes et compteurs (ticks, entités visitées/modifiées, événements, appels PRNG) ; aucun temps mural n'entre dans ce format, les checksums ou les verdicts ;
+- télémétrie JSON `aetherion.telemetry/v1` via `run --telemetry FILE` : tick/checksum, ordre des systèmes et compteurs (ticks, entités visitées/modifiées, événements, appels PRNG, collisions résolues) ; aucun temps mural n'entre dans ce format, les checksums ou les verdicts ;
 - replay JSON v2 avec `checkpoint_interval`, tick 0 et tick final obligatoires ; `--checkpoint-interval 1` conserve un checksum par tick et les replays v1 restent lus et vérifiés sans migration manuelle ;
 - entrées déterministes `set_velocity`, `impulse`, `translate`, `stop`, appliquées par le système `input` avant le système `movement` ;
 - diff JSON structuré par tick, entité et chemin de champ, utilisable aussi pour les manifestes de capture ;
@@ -54,6 +64,7 @@ Sous Windows, le binaire release se trouve dans `target/release/aetherion.exe`.
 - simulation à pas fixe utilisant des entiers, ordre canonique par identifiant ;
 - exécution obligatoirement bornée par `--ticks` (10 par défaut) ;
 - snapshots JSON versionnés (`aetherion.snapshot/v1`) ;
+- M7-A : collider 2D optionnel validé, détection AABB canonique, séparation entière, réponse de vitesse à restitution milli-unitaire, corps statiques, snapshot inspectable et télémétrie du système `physics` ;
 - validation stricte et tests unitaires/intégration.
 
 `inspect` décrit l'état initial sans le modifier. `run --json` décrit l'état final. Les sorties JSON vont sur stdout ; les erreurs vont sur stderr avec un code non nul.
@@ -74,9 +85,10 @@ id = 1
 name = "player"
 position = { x = 0, y = 0 }
 velocity = { x = 1, y = 0 }
+collider = { half_width = 1, half_height = 1, mass_milli = 1000, restitution_milli = 1000, is_static = false }
 ```
 
-Les sections `[render]`, `[render.camera]` et le champ `appearance` des entités sont optionnels : les anciens projets gardent les valeurs par défaut (160×120, caméra centrée, rectangles verts 2×2). Le format PPM P6 est volontairement retenu pour éviter une dépendance d'encodage ; le manifeste adjacent porte le suffixe `.ppm.json`.
+Les sections `[render]`, `[render.camera]`, le champ `appearance` et le champ `collider` des entités sont optionnels : les anciens projets gardent les valeurs par défaut (160×120, caméra centrée, rectangles verts 2×2) et restent sans simulation physique active. Un collider déclare des demi-tailles positives, une masse en milli-unités, une restitution de `0` à `1000` et un éventuel `is_static`. Le format PPM P6 est volontairement retenu pour éviter une dépendance d'encodage ; le manifeste adjacent porte le suffixe `.ppm.json`.
 
 Les coordonnées sont des entiers signés : ce choix évite les divergences usuelles des flottants. SplitMix64 utilise exclusivement `wrapping_add`, XOR, décalages et multiplications modulo 2^64 (constantes `9e3779b97f4a7c15`, `bf58476d1ce4e5b9`, `94d049bb133111eb`) ; son état est l'unique mot `u64`. La graine initialise cet état. Les scènes historiques n'appellent pas le PRNG par défaut, donc leurs snapshots, captures et checksums restent inchangés.
 
@@ -105,12 +117,20 @@ aetherion visual-diff3d --baseline-manifest baseline.ppm.json --candidate-manife
 aetherion visual-diff3d --baseline-manifest baseline.ppm.json --candidate-manifest capture.ppm.json --color-max-channel-delta 2 --depth-max-channel-delta 4 --normals-max-different-pixels 2 --segmentation-max-different-pixels 1 --report diff3d.json
 ```
 
+## Certification M4
+
+La commande `cargo run -- certify-m4 --report docs/m4-certification.json` exécute une matrice autonome et bornée couvrant le défaut historique de capture, les canaux 2D, le diff 2D, les assets externes 3D, les canaux 3D et le diff 3D. Elle publie atomiquement le rapport versionné `aetherion.m4-certification/v1`, également émis sur stdout. Les preuves sont des checksums FNV-1a stables, sans chemin temporaire ni temps mural. Le code est `0` si toutes les vérifications passent et `2` pour une erreur de validation ou de publication ; les codes historiques `1` et `3` restent réservés aux verdicts de diff/assertion et divergences/budgets.
+
+Le rapport de référence est [`docs/m4-certification.json`](docs/m4-certification.json) et son schéma est exposé par `schema show m4-certification`.
+
 ## Développement
 
 ```console
 cargo fmt --check
 cargo test
 cargo clippy --all-targets -- -D warnings
+cargo check --features plugin-runtime
+cargo test --features plugin-runtime plugin_runtime::tests
 ```
 
 ### Note sur la toolchain Windows testée

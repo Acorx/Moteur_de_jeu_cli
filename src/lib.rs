@@ -1,11 +1,17 @@
 pub mod agent;
 pub mod assets;
 pub mod assets3d;
+pub mod bundle;
 pub mod capture;
+pub mod certification;
 pub mod diff;
 pub mod display;
 pub mod ecs;
 pub mod error;
+pub mod plugin;
+pub mod plugin_lock;
+#[cfg(feature = "plugin-runtime")]
+pub mod plugin_runtime;
 pub mod project;
 pub mod render;
 pub mod render3d;
@@ -16,6 +22,7 @@ pub mod scenario;
 pub mod scene;
 pub mod scheduler;
 pub mod schema;
+pub mod script;
 pub mod simulation;
 pub mod telemetry;
 pub mod visual_diff;
@@ -136,6 +143,38 @@ pub enum Command {
         root: PathBuf,
         id: String,
     },
+    PluginValidate {
+        manifest: PathBuf,
+    },
+    PluginInspect {
+        manifest: PathBuf,
+    },
+    PluginList {
+        root: PathBuf,
+    },
+    PluginResolve {
+        dir: PathBuf,
+        lockfile: PathBuf,
+    },
+    PluginLockCheck {
+        dir: PathBuf,
+        lockfile: PathBuf,
+    },
+    ScriptRun {
+        script: PathBuf,
+        dry_run: bool,
+        report: Option<PathBuf>,
+    },
+    Bundle {
+        path: PathBuf,
+        output: PathBuf,
+    },
+    BundleInspect {
+        input: PathBuf,
+    },
+    CertifyM4 {
+        report: PathBuf,
+    },
 }
 
 impl Command {
@@ -153,6 +192,40 @@ impl Command {
                     name: args.get(2).ok_or("schema show requiert un nom")?.clone(),
                 }),
                 _ => Err("usage: aetherion schema list|show <nom>".into()),
+            };
+        }
+        if name == "plugin" {
+            return match args.get(1).map(String::as_str) {
+                Some("validate") => Ok(Self::PluginValidate {
+                    manifest: PathBuf::from(
+                        args.get(2).ok_or("plugin validate requiert un manifeste")?,
+                    ),
+                }),
+                Some("inspect") => Ok(Self::PluginInspect {
+                    manifest: PathBuf::from(
+                        args.get(2).ok_or("plugin inspect requiert un manifeste")?,
+                    ),
+                }),
+                Some("resolve") => {
+                    let (dir, lockfile) = parse_plugin_lock_args(&args[2..])?;
+                    Ok(Self::PluginResolve { dir, lockfile })
+                }
+                Some("lock-check") => {
+                    let (dir, lockfile) = parse_plugin_lock_args(&args[2..])?;
+                    Ok(Self::PluginLockCheck { dir, lockfile })
+                }
+                Some("list") => {
+                    let root = match args.len() {
+                        3 => PathBuf::from(&args[2]),
+                        2 => PathBuf::from("plugins"),
+                        _ => return Err("usage: aetherion plugin list [DOSSIER]".into()),
+                    };
+                    Ok(Self::PluginList { root })
+                }
+                _ => Err(
+                    "usage: aetherion plugin validate|inspect MANIFESTE | plugin list [DOSSIER]"
+                        .into(),
+                ),
             };
         }
         if name == "scene" {
@@ -218,6 +291,8 @@ impl Command {
         let mut depth = visual_diff::Tolerances::default();
         let mut normals = visual_diff::Tolerances::default();
         let mut segmentation_max_different_pixels = 0;
+        let mut dry_run = false;
+        let mut script_path = None;
         let mut i = 1;
         while i < args.len() {
             let value = |index: usize, option: &str| -> Result<&String> {
@@ -231,11 +306,10 @@ impl Command {
                 }
                 "--ticks" | "-t" => {
                     i += 1;
-                    ticks = Some(
-                        value(i, "--ticks")?
-                            .parse::<u64>()
-                            .map_err(|_| AppError::new("--ticks doit être un entier positif"))?,
-                    );
+                    ticks =
+                        Some(value(i, "--ticks")?.parse::<u64>().map_err(|_| {
+                            AppError::new("--ticks doit ÃƒÂªtre un entier positif")
+                        })?);
                 }
                 "--json" => json = true,
                 "--telemetry" => {
@@ -248,7 +322,9 @@ impl Command {
                         value(i, "--checkpoint-interval")?
                             .parse::<u64>()
                             .map_err(|_| {
-                                AppError::new("--checkpoint-interval doit être un entier positif")
+                                AppError::new(
+                                    "--checkpoint-interval doit ÃƒÂªtre un entier positif",
+                                )
                             })?,
                     );
                 }
@@ -287,7 +363,9 @@ impl Command {
                         value(i, "--max-channel-delta")?
                             .parse::<u32>()
                             .map_err(|_| {
-                                AppError::new("--max-channel-delta doit être un entier non signé")
+                                AppError::new(
+                                    "--max-channel-delta doit ÃƒÂªtre un entier non signÃƒÂ©",
+                                )
                             })?;
                 }
                 "--max-different-pixels" => {
@@ -295,7 +373,9 @@ impl Command {
                     max_different_pixels = value(i, "--max-different-pixels")?
                         .parse::<u64>()
                         .map_err(|_| {
-                            AppError::new("--max-different-pixels doit être un entier non signé")
+                            AppError::new(
+                                "--max-different-pixels doit ÃƒÂªtre un entier non signÃƒÂ©",
+                            )
                         })?;
                 }
                 "--max-different-percent-milli" => {
@@ -304,12 +384,12 @@ impl Command {
                         .parse::<u64>()
                         .map_err(|_| {
                             AppError::new(
-                                "--max-different-percent-milli doit être un entier non signé",
+                                "--max-different-percent-milli doit ÃƒÂªtre un entier non signÃƒÂ©",
                             )
                         })?;
                     if max_different_percent_milli > 100_000 {
                         return Err(
-                            "--max-different-percent-milli doit être compris entre 0 et 100000"
+                            "--max-different-percent-milli doit ÃƒÂªtre compris entre 0 et 100000"
                                 .into(),
                         );
                     }
@@ -376,19 +456,17 @@ impl Command {
                 }
                 "--width" => {
                     i += 1;
-                    width = Some(
-                        value(i, "--width")?
-                            .parse::<u32>()
-                            .map_err(|_| AppError::new("--width doit être un entier positif"))?,
-                    );
+                    width =
+                        Some(value(i, "--width")?.parse::<u32>().map_err(|_| {
+                            AppError::new("--width doit ÃƒÂªtre un entier positif")
+                        })?);
                 }
                 "--height" => {
                     i += 1;
-                    height = Some(
-                        value(i, "--height")?
-                            .parse::<u32>()
-                            .map_err(|_| AppError::new("--height doit être un entier positif"))?,
-                    );
+                    height =
+                        Some(value(i, "--height")?.parse::<u32>().map_err(|_| {
+                            AppError::new("--height doit ÃƒÂªtre un entier positif")
+                        })?);
                 }
                 "--baseline-manifest" => {
                     i += 1;
@@ -468,12 +546,16 @@ impl Command {
                         "--segmentation-max-different-pixels",
                     )?;
                 }
+                "--script" => {
+                    i += 1;
+                    script_path = Some(PathBuf::from(value(i, "--script")?));
+                }
+                "--dry-run" => dry_run = true,
                 "--max-ticks" => {
                     i += 1;
-                    max_ticks =
-                        Some(value(i, "--max-ticks")?.parse::<u64>().map_err(|_| {
-                            AppError::new("--max-ticks doit être un entier positif")
-                        })?);
+                    max_ticks = Some(value(i, "--max-ticks")?.parse::<u64>().map_err(|_| {
+                        AppError::new("--max-ticks doit ÃƒÂªtre un entier positif")
+                    })?);
                 }
                 other => return Err(format!("option inconnue: {other}").into()),
             }
@@ -577,6 +659,21 @@ impl Command {
                 report,
                 audit,
             }),
+            "script-run" => Ok(Self::ScriptRun {
+                script: script_path.ok_or("script-run requiert --script")?,
+                dry_run,
+                report,
+            }),
+            "bundle" => Ok(Self::Bundle {
+                path,
+                output: output.ok_or("bundle requiert --output")?,
+            }),
+            "bundle-inspect" => Ok(Self::BundleInspect {
+                input: input.ok_or("bundle-inspect requiert --input")?,
+            }),
+            "certify-m4" => Ok(Self::CertifyM4 {
+                report: report.ok_or("certify-m4 requiert --report")?,
+            }),
             "agent" => Ok(Self::Agent {
                 root: root.ok_or("agent requiert --root")?,
                 path,
@@ -588,28 +685,60 @@ impl Command {
     }
 }
 
+fn parse_plugin_lock_args(args: &[String]) -> Result<(PathBuf, PathBuf)> {
+    let mut dir = None;
+    let mut lockfile = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--dir" => {
+                index += 1;
+                dir = Some(PathBuf::from(
+                    args.get(index).ok_or("--dir requiert une valeur")?,
+                ));
+            }
+            "--lockfile" => {
+                index += 1;
+                lockfile = Some(PathBuf::from(
+                    args.get(index).ok_or("--lockfile requiert une valeur")?,
+                ));
+            }
+            other => return Err(format!("option inconnue: {other}").into()),
+        }
+        index += 1;
+    }
+    Ok((
+        dir.ok_or("plugin resolve/lock-check requiert --dir")?,
+        lockfile.unwrap_or_else(|| PathBuf::from("aetherion.plugin-lock.json")),
+    ))
+}
+
 fn parse_u32_option(value: &str, option: &str) -> Result<u32> {
-    value
-        .parse()
-        .map_err(|_| AppError::new(format!("{option} doit ├¬tre un entier non sign├®")))
+    value.parse().map_err(|_| {
+        AppError::new(format!(
+            "{option} doit Ã¢â€Å“Ã‚Â¬tre un entier non signÃ¢â€Å“Ã‚Â®"
+        ))
+    })
 }
 
 fn parse_u64_option(value: &str, option: &str) -> Result<u64> {
-    value
-        .parse()
-        .map_err(|_| AppError::new(format!("{option} doit ├¬tre un entier non sign├®")))
+    value.parse().map_err(|_| {
+        AppError::new(format!(
+            "{option} doit Ã¢â€Å“Ã‚Â¬tre un entier non signÃ¢â€Å“Ã‚Â®"
+        ))
+    })
 }
 
 fn parse_percent_option(value: &str, option: &str) -> Result<u64> {
     let parsed = parse_u64_option(value, option)?;
     if parsed > 100_000 {
-        return Err(format!("{option} doit ├¬tre compris entre 0 et 100000").into());
+        return Err(format!("{option} doit Ã¢â€Å“Ã‚Â¬tre compris entre 0 et 100000").into());
     }
     Ok(parsed)
 }
 
 pub fn help() -> &'static str {
-    "Aetherion 0.1.0 — moteur de jeu CLI headless et déterministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           Crée un projet déclaratif minimal\n  doctor         Vérifie la configuration et l'environnement\n  inspect        Émet le snapshot initial JSON\n  run            Exécute une simulation bornée\n  capture        Écrit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scène 3D headless en PPM\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  Crée un replay avec checkpoints configurables\n  replay-run     Rejoue et vérifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolérances entières\n  scenario-run   Exécute un scénario agent-native borné\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schémas JSON publiés\n  scene          Liste ou affiche les scènes JSON\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals ├®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succès, 1 différence/assertion échouée, 2 usage/validation, 3 divergence/budget"
+    "Aetherion 0.1.0 Ã¢â‚¬â€ moteur de jeu CLI headless et dÃƒÂ©terministe\n\nUSAGE:\n  aetherion <COMMANDE> [OPTIONS]\n\nCOMMANDES:\n  init           CrÃƒÂ©e un projet dÃƒÂ©claratif minimal\n  doctor         VÃƒÂ©rifie la configuration et l'environnement\n  inspect        Ãƒâ€°met le snapshot initial JSON\n  run            ExÃƒÂ©cute une simulation bornÃƒÂ©e\n  capture        Ãƒâ€°crit une image PPM/PNG et son manifeste JSON\n  capture-multi  Publie atomiquement plusieurs vues\n  capture3d      Rend une scÃƒÂ¨ne 3D headless en PPM\n  play           Ouvre l'affichage Windows optionnel\n  replay-create  CrÃƒÂ©e un replay avec checkpoints configurables\n  replay-run     Rejoue et vÃƒÂ©rifie un replay v1 ou v2\n  diff           Compare deux snapshots ou manifestes JSON\n  visual-diff    Compare deux captures avec tolÃƒÂ©rances entiÃƒÂ¨res\n  scenario-run   ExÃƒÂ©cute un scÃƒÂ©nario agent-native bornÃƒÂ©\n  agent          Pilote un monde par JSONL sur stdin/stdout\n  schema         Liste ou affiche les schÃƒÂ©mas JSON publiÃƒÂ©s\n  scene          Liste ou affiche les scÃƒÂ¨nes JSON\n  plugin         Valide, inspecte ou liste les manifestes de plugins\n  certify-m4     Certifie M4 et publie un rapport JSON dÃ¢â€Å“Ã‚Â®terministe\n  help           Affiche cette aide\n\nM4 prototype 3D:\n  capture3d --scene FILE --output FILE [--width N] [--height N] [--ticks N] [--animation ID] [--assets FILE] [--channels color,depth,normals,segmentation]\n\nM4-D:\n  visual-diff --baseline FILE --candidate FILE [--max-channel-delta N] [--max-different-pixels N] [--max-different-percent-milli N] [--report FILE]\n\nM4-H:\n  visual-diff3d --baseline-manifest FILE --candidate-manifest FILE --report FILE [--color-max-channel-delta N] [--color-max-different-pixels N] [--color-max-different-percent-milli N] [options depth/normals Ã¢â€Å“Ã‚Â®quivalentes] [--segmentation-max-different-pixels N]\n\nM3:\n  capture --path DIR --ticks N --format ppm|png --output FILE [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  capture-multi --path DIR --views FILE --output-dir DIR [--ticks N] [--assets FILE] [--scene ID] [--channels color,depth,normals,segmentation]\n  scene list [--root PATH] | scene show ID [--root PATH]\n  play --path DIR [--max-ticks N] (requiert --features display)\n\nM2:\n  agent --path DIR --root DIR [--policy FILE] [--audit FILE]\n  schema list | schema show NOM\n\nCODES:\n  0 succÃƒÂ¨s, 1 diffÃƒÂ©rence/assertion ÃƒÂ©chouÃƒÂ©e, 2 usage/validation, 3 divergence/budget"
 }
 
 pub fn execute(command: Command) -> Result<Option<String>> {
@@ -617,19 +746,24 @@ pub fn execute(command: Command) -> Result<Option<String>> {
         Command::Help => Ok(Some(help().into())),
         Command::Init { path, force } => {
             fs::create_dir_all(&path)
-                .map_err(|error| format!("création de {}: {error}", path.display()))?;
+                .map_err(|error| format!("crÃƒÂ©ation de {}: {error}", path.display()))?;
             let target = path.join(PROJECT_FILE);
             if target.exists() && !force {
-                return Err(format!("{} existe déjà (utilisez --force)", target.display()).into());
+                return Err(
+                    format!("{} existe dÃƒÂ©jÃƒÂ  (utilisez --force)", target.display()).into(),
+                );
             }
             fs::write(&target, Project::example())
-                .map_err(|error| format!("écriture de {}: {error}", target.display()))?;
-            Ok(Some(format!("Projet Aetherion créé: {}", target.display())))
+                .map_err(|error| format!("ÃƒÂ©criture de {}: {error}", target.display()))?;
+            Ok(Some(format!(
+                "Projet Aetherion crÃƒÂ©ÃƒÂ©: {}",
+                target.display()
+            )))
         }
         Command::Doctor { path } => {
             let project = Project::load(&path)?;
             Ok(Some(format!(
-                "OK: {} — {} entité(s), tick_rate={} Hz, seed={}",
+                "OK: {} Ã¢â‚¬â€ {} entitÃƒÂ©(s), tick_rate={} Hz, seed={}",
                 project.project.name,
                 project.entities.len(),
                 project.simulation.tick_rate,
@@ -654,7 +788,7 @@ pub fn execute(command: Command) -> Result<Option<String>> {
                 Ok(Some(world.snapshot_json()?))
             } else {
                 Ok(Some(format!(
-                    "Simulation terminée: tick={}, entités={}, checksum={}",
+                    "Simulation terminÃƒÂ©e: tick={}, entitÃƒÂ©s={}, checksum={}",
                     world.tick,
                     world.entity_count(),
                     world.checksum()
@@ -684,7 +818,7 @@ pub fn execute(command: Command) -> Result<Option<String>> {
                 &channels,
             )?;
             Ok(Some(format!(
-                "Capture écrite: {} (manifeste: {})",
+                "Capture ÃƒÂ©crite: {} (manifeste: {})",
                 output.display(),
                 manifest.display()
             )))
@@ -712,7 +846,7 @@ pub fn execute(command: Command) -> Result<Option<String>> {
                 &channels,
             )?;
             Ok(Some(format!(
-                "Captures multi-vues écrites: {}",
+                "Captures multi-vues ÃƒÂ©crites: {}",
                 manifest.display()
             )))
         }
@@ -737,7 +871,7 @@ pub fn execute(command: Command) -> Result<Option<String>> {
                 &channels,
             )?;
             Ok(Some(format!(
-                "Capture 3D écrite: {} (manifeste: {})",
+                "Capture 3D ÃƒÂ©crite: {} (manifeste: {})",
                 output.display(),
                 manifest.display()
             )))
@@ -748,7 +882,10 @@ pub fn execute(command: Command) -> Result<Option<String>> {
             output,
         } => {
             assets3d::import(&input, kind, &output)?;
-            Ok(Some(format!("Ressource 3D importée: {}", output.display())))
+            Ok(Some(format!(
+                "Ressource 3D importÃƒÂ©e: {}",
+                output.display()
+            )))
         }
         Command::Play { path, max_ticks } => {
             display::play(Project::load(&path)?, max_ticks)?;
@@ -782,7 +919,7 @@ pub fn execute(command: Command) -> Result<Option<String>> {
                 &replay_path.to_string_lossy(),
             )?;
             Ok(Some(serde_json::to_string_pretty(&report).map_err(
-                |error| format!("sérialisation du rapport: {error}"),
+                |error| format!("sÃƒÂ©rialisation du rapport: {error}"),
             )?))
         }
         Command::Diff { left, right } => {
@@ -814,7 +951,7 @@ pub fn execute(command: Command) -> Result<Option<String>> {
         } => {
             let result = scenario::run(&path, &scenario_path, report.as_deref(), audit.as_deref())?;
             Ok(Some(serde_json::to_string_pretty(&result).map_err(
-                |error| format!("sérialisation du rapport: {error}"),
+                |error| format!("sÃƒÂ©rialisation du rapport: {error}"),
             )?))
         }
         Command::Agent {
@@ -830,12 +967,42 @@ pub fn execute(command: Command) -> Result<Option<String>> {
         Command::SchemaShow { name } => Ok(Some(schema::show(&name)?)),
         Command::SceneList { root } => Ok(Some(
             serde_json::to_string_pretty(&scene::list(&root)?)
-                .map_err(|error| format!("sérialisation des scènes: {error}"))?,
+                .map_err(|error| format!("sÃƒÂ©rialisation des scÃƒÂ¨nes: {error}"))?,
         )),
         Command::SceneShow { root, id } => Ok(Some(
             serde_json::to_string_pretty(&scene::load(&root, &id)?)
-                .map_err(|error| format!("sérialisation de la scène: {error}"))?,
+                .map_err(|error| format!("sÃƒÂ©rialisation de la scÃƒÂ¨ne: {error}"))?,
         )),
+        Command::PluginValidate { manifest } => Ok(Some(plugin::validation_report(&manifest)?)),
+        Command::PluginInspect { manifest } => Ok(Some(plugin::inspect(&manifest)?)),
+        Command::PluginList { root } => Ok(Some(plugin::catalog_json(&root)?)),
+        Command::PluginResolve { dir, lockfile } => Ok(Some(
+            serde_json::to_string_pretty(&plugin_lock::resolve(&dir, &lockfile)?)
+                .map_err(|e| format!("plugin_lock_serialize: {e}"))?,
+        )),
+        Command::PluginLockCheck { dir, lockfile } => Ok(Some(
+            serde_json::to_string_pretty(&plugin_lock::check(&dir, &lockfile)?)
+                .map_err(|e| format!("plugin_lock_serialize: {e}"))?,
+        )),
+        Command::ScriptRun {
+            script: script_path,
+            dry_run,
+            report,
+        } => Ok(Some(
+            serde_json::to_string_pretty(&script::run(&script_path, dry_run, report.as_deref())?)
+                .map_err(|e| format!("script_report_serialize: {e}"))?,
+        )),
+        Command::Bundle { path, output } => {
+            bundle::create(&path, &output)?;
+            Ok(Some(format!("Bundle â”œÂ®crit: {}", output.display())))
+        }
+        Command::BundleInspect { input } => Ok(Some(bundle::inspect(&input)?)),
+        Command::CertifyM4 { report } => {
+            let value = certification::certify(&report)?;
+            Ok(Some(serde_json::to_string_pretty(&value).map_err(
+                |error| format!("sÃ¢â€Å“Ã‚Â®rialisation de la certification M4: {error}"),
+            )?))
+        }
     }
 }
 

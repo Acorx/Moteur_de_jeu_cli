@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/m4-certification-v1.json",
+  "title": "Aetherion M4 certification report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "milestone", "status", "checks", "contracts"],
+  "properties": {
+    "schema": { "const": "aetherion.m4-certification/v1" },
+    "milestone": { "const": "M4" },
+    "status": { "const": "certified" },
+    "checks": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "passed", "evidence"],
+        "properties": {
+          "id": {
+            "enum": [
+              "historical-capture-default",
+              "capture-2d-channels",
+              "visual-diff-2d",
+              "assets-3d",
+              "capture-3d-channels",
+              "visual-diff-3d"
+            ]
+          },
+          "passed": { "const": true },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 }
+          }
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_codes", "deterministic", "atomic_publication", "historical_defaults_preserved"],
+      "properties": {
+        "exit_codes": { "const": [0, 1, 2, 3] },
+        "deterministic": { "const": true },
+        "atomic_publication": { "const": true },
+        "historical_defaults_preserved": { "const": true }
+      }
+    }
+  }
+}

@@ -47,10 +47,11 @@ pub struct SceneSummary {
 }
 
 pub fn list(root: &Path) -> Result<Vec<SceneSummary>> {
-    let directory = root.join(SCENES_DIR);
-    if !directory.exists() {
+    let requested_directory = root.join(SCENES_DIR);
+    if !requested_directory.exists() {
         return Ok(Vec::new());
     }
+    let directory = confined_directory(root)?;
     let mut paths: Vec<PathBuf> = fs::read_dir(&directory)
         .map_err(|e| format!("scene_list: {}: {e}", directory.display()))?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -78,7 +79,8 @@ pub fn list(root: &Path) -> Result<Vec<SceneSummary>> {
 
 pub fn load(root: &Path, id: &str) -> Result<Scene> {
     validate_id(id)?;
-    let scene = load_file(&root.join(SCENES_DIR).join(format!("{id}.json")))?;
+    let path = confined_file(root, &format!("{id}.json"))?;
+    let scene = load_file(&path)?;
     if scene.id != id {
         return Err(format!("scene_id_mismatch: fichier {id}, contenu {}", scene.id).into());
     }
@@ -86,6 +88,11 @@ pub fn load(root: &Path, id: &str) -> Result<Scene> {
 }
 
 fn load_file(path: &Path) -> Result<Scene> {
+    let link_metadata =
+        fs::symlink_metadata(path).map_err(|e| format!("scene_read: {}: {e}", path.display()))?;
+    if link_metadata.file_type().is_symlink() || !link_metadata.is_file() {
+        return Err(format!("scene_path_symlink_or_non_file: {}", path.display()).into());
+    }
     let metadata =
         fs::metadata(path).map_err(|e| format!("scene_read: {}: {e}", path.display()))?;
     if metadata.len() > MAX_SCENE_BYTES {
@@ -155,6 +162,36 @@ pub fn build_world(scene: &Scene, base: &Project) -> Result<World> {
     };
     project.validate()?;
     Ok(World::from_project(project))
+}
+
+fn confined_directory(root: &Path) -> Result<PathBuf> {
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|e| format!("scene_root_read: {}: {e}", root.display()))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err("scene_root_not_directory_or_symlink".into());
+    }
+    let directory = root.join(SCENES_DIR);
+    let metadata = fs::symlink_metadata(&directory)
+        .map_err(|e| format!("scene_read: {}: {e}", directory.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "scene_path_symlink_or_non_directory: {}",
+            directory.display()
+        )
+        .into());
+    }
+    Ok(directory)
+}
+
+fn confined_file(root: &Path, file_name: &str) -> Result<PathBuf> {
+    let directory = confined_directory(root)?;
+    let path = directory.join(file_name);
+    let metadata =
+        fs::symlink_metadata(&path).map_err(|e| format!("scene_read: {}: {e}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!("scene_path_symlink_or_non_file: {}", path.display()).into());
+    }
+    Ok(path)
 }
 
 fn validate_id(id: &str) -> Result<()> {

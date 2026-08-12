@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/scene3d-v1.json",
+  "title": "Aetherion 3D scene v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema"],
+  "properties": {
+    "schema": { "const": "aetherion.scene3d/v1" },
+    "camera": { "$ref": "#/$defs/camera" },
+    "background": { "$ref": "#/$defs/color" },
+    "triangles": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/triangle" } },
+    "meshes": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/mesh" } },
+    "materials": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/material" } },
+    "objects": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/object" } },
+    "animations": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/animation" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "color": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "integer", "minimum": 0, "maximum": 255 } },
+    "vertex": { "type": "object", "additionalProperties": false, "required": ["x", "y", "z"], "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "z": { "type": "integer" } } },
+    "camera": { "type": "object", "additionalProperties": false, "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "z": { "type": "integer" }, "pixels_per_unit": { "type": "integer", "minimum": 1, "maximum": 1024 } } },
+    "triangle": { "type": "object", "additionalProperties": false, "required": ["id", "vertices", "color"], "properties": { "id": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "vertices": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/vertex" } }, "color": { "$ref": "#/$defs/color" } } },
+    "mesh": { "type": "object", "additionalProperties": false, "required": ["id"], "properties": { "id": { "$ref": "#/$defs/id" }, "vertices": { "type": "array", "maxItems": 300000, "items": { "$ref": "#/$defs/vertex" } }, "triangles": { "type": "array", "maxItems": 100000, "items": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "integer", "minimum": 0, "maximum": 4294967295 } } } } },
+    "material": { "type": "object", "additionalProperties": false, "required": ["id"], "properties": { "id": { "$ref": "#/$defs/id" }, "color": { "$ref": "#/$defs/color" }, "opacity": { "type": "integer", "minimum": 0, "maximum": 1000 } } },
+    "transform": { "type": "object", "additionalProperties": false, "properties": { "scale": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "integer" } }, "rotation": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "integer", "multipleOf": 90000 } }, "translation": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "integer" } } } },
+    "object": { "type": "object", "additionalProperties": false, "required": ["id", "mesh", "material"], "properties": { "id": { "$ref": "#/$defs/id" }, "mesh": { "$ref": "#/$defs/id" }, "material": { "$ref": "#/$defs/id" }, "transform": { "$ref": "#/$defs/transform" } } },
+    "keyframe": { "type": "object", "additionalProperties": false, "required": ["tick"], "properties": { "tick": { "type": "integer", "minimum": 0 }, "transform": { "$ref": "#/$defs/transform" } } },
+    "track": { "type": "object", "additionalProperties": false, "required": ["object"], "properties": { "object": { "$ref": "#/$defs/id" }, "keyframes": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/keyframe" } } } },
+    "animation": { "type": "object", "additionalProperties": false, "required": ["id", "duration_ticks"], "properties": { "id": { "$ref": "#/$defs/id" }, "duration_ticks": { "type": "integer", "minimum": 1 }, "looping": { "type": "boolean" }, "tracks": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/track" } } } }
+  }
+}

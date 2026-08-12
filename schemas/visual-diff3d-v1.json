@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aetherion.dev/schemas/visual-diff3d-v1.json",
+  "title": "Aetherion 3D visual diff report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "baseline_manifest", "candidate_manifest", "width", "height", "passed", "channels", "missing_channels", "incompatible_channels", "segmentation_differences"],
+  "properties": {
+    "schema": { "const": "aetherion.visual-diff3d/v1" },
+    "baseline_manifest": { "type": "string" },
+    "candidate_manifest": { "type": "string" },
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "passed": { "type": "boolean" },
+    "channels": { "type": "object", "additionalProperties": { "$ref": "visual-diff-v1.json" } },
+    "missing_channels": { "type": "array", "items": { "type": "string" } },
+    "incompatible_channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "reason"],
+        "properties": { "channel": { "type": "string" }, "reason": { "type": "string" } }
+      }
+    },
+    "segmentation_differences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["baseline_id", "candidate_id", "pixels"],
+        "properties": {
+          "baseline_id": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+          "candidate_id": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+          "pixels": { "type": "integer", "minimum": 1 },
+          "baseline_primitive": { "$ref": "#/$defs/primitive" },
+          "candidate_primitive": { "$ref": "#/$defs/primitive" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "primitive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["triangle_id", "source", "rank"],
+      "properties": {
+        "triangle_id": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "source": { "type": "string" },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      }
+    }
+  }
+}

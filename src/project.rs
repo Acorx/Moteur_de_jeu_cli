@@ -90,6 +90,8 @@ pub struct EntityConfig {
     pub appearance: Appearance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite: Option<SpriteConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<Collider>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -165,6 +167,19 @@ pub struct Appearance {
     pub color: [u8; 3],
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Collider {
+    pub half_width: u32,
+    pub half_height: u32,
+    #[serde(default = "default_collider_mass_milli")]
+    pub mass_milli: u32,
+    #[serde(default = "default_collider_restitution_milli")]
+    pub restitution_milli: u32,
+    #[serde(default)]
+    pub is_static: bool,
+}
+
 impl Default for Appearance {
     fn default() -> Self {
         Self {
@@ -192,6 +207,12 @@ const fn default_background() -> [u8; 3] {
 }
 const fn default_entity_color() -> [u8; 3] {
     [80, 220, 120]
+}
+const fn default_collider_mass_milli() -> u32 {
+    1000
+}
+const fn default_collider_restitution_milli() -> u32 {
+    1000
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -269,6 +290,22 @@ impl Project {
                     );
                 }
             }
+            if let Some(collider) = &entity.collider {
+                if collider.half_width == 0 || collider.half_height == 0 {
+                    return Err(
+                        "collider demi-taille invalide: valeurs strictement positives requises"
+                            .into(),
+                    );
+                }
+                if collider.mass_milli == 0 {
+                    return Err("collider mass_milli doit être supérieur à 0".into());
+                }
+                if collider.restitution_milli > 1000 {
+                    return Err(
+                        "collider restitution_milli doit être compris entre 0 et 1000".into(),
+                    );
+                }
+            }
         }
         let mut ids: Vec<u64> = self.entities.iter().map(|e| e.id).collect();
         ids.sort_unstable();
@@ -328,5 +365,42 @@ mod tests {
         let mut project: Project = toml::from_str(Project::example()).unwrap();
         project.entities[1].id = 1;
         assert!(project.validate().unwrap_err().message.contains("uniques"));
+    }
+
+    #[test]
+    fn collider_is_optional_and_validated() {
+        let mut project: Project = toml::from_str(Project::example()).unwrap();
+        project.entities[0].collider = Some(Collider {
+            half_width: 1,
+            half_height: 2,
+            mass_milli: 1000,
+            restitution_milli: 250,
+            is_static: false,
+        });
+        project.validate().unwrap();
+
+        project.entities[0].collider.as_mut().unwrap().half_width = 0;
+        assert!(
+            project
+                .validate()
+                .unwrap_err()
+                .message
+                .contains("demi-taille invalide")
+        );
+
+        project.entities[0].collider = Some(Collider {
+            half_width: 1,
+            half_height: 1,
+            mass_milli: 1000,
+            restitution_milli: 1001,
+            is_static: false,
+        });
+        assert!(
+            project
+                .validate()
+                .unwrap_err()
+                .message
+                .contains("restitution_milli")
+        );
     }
 }

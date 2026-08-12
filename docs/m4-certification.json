@@ -1,0 +1,68 @@
+{
+  "schema": "aetherion.m4-certification/v1",
+  "milestone": "M4",
+  "status": "certified",
+  "checks": [
+    {
+      "id": "historical-capture-default",
+      "passed": true,
+      "evidence": [
+        947819481042211155
+      ]
+    },
+    {
+      "id": "capture-2d-channels",
+      "passed": true,
+      "evidence": [
+        436463257140946803,
+        15903635878673804576,
+        10441880495966251631,
+        1973426989989942126
+      ]
+    },
+    {
+      "id": "visual-diff-2d",
+      "passed": true,
+      "evidence": [
+        7141933904666046863
+      ]
+    },
+    {
+      "id": "assets-3d",
+      "passed": true,
+      "evidence": [
+        12402635797936513046,
+        5176825913614392617,
+        9826448692168126055
+      ]
+    },
+    {
+      "id": "capture-3d-channels",
+      "passed": true,
+      "evidence": [
+        8883423527286345365,
+        11036229122258992939,
+        2223065189243468506,
+        14033429692731186295
+      ]
+    },
+    {
+      "id": "visual-diff-3d",
+      "passed": true,
+      "evidence": [
+        8809253875685613449
+      ]
+    }
+  ],
+  "contracts": {
+    "exit_codes": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "deterministic": true,
+    "atomic_publication": true,
+    "historical_defaults_preserved": true
+  }
+}

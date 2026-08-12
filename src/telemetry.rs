@@ -15,6 +15,7 @@ pub struct SystemCounters {
     pub entities_modified: u64,
     pub events_applied: u64,
     pub prng_calls: u64,
+    pub collisions_resolved: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

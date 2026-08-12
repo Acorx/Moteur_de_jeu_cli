@@ -4,7 +4,8 @@ use crate::Result;
 
 pub const INPUT_SYSTEM: &str = "input";
 pub const MOVEMENT_SYSTEM: &str = "movement";
-pub const DEFAULT_SYSTEM_ORDER: [&str; 2] = [INPUT_SYSTEM, MOVEMENT_SYSTEM];
+pub const PHYSICS_SYSTEM: &str = "physics";
+pub const DEFAULT_SYSTEM_ORDER: [&str; 3] = [INPUT_SYSTEM, MOVEMENT_SYSTEM, PHYSICS_SYSTEM];
 
 #[derive(Clone, Debug)]
 pub struct Scheduler {
@@ -16,7 +17,7 @@ impl Scheduler {
         if order.is_empty() {
             return Err("l'ordonnanceur doit contenir au moins un système".into());
         }
-        let known = [INPUT_SYSTEM, MOVEMENT_SYSTEM];
+        let known = [INPUT_SYSTEM, MOVEMENT_SYSTEM, PHYSICS_SYSTEM];
         let mut seen = HashSet::new();
         for name in &order {
             if !known.contains(name) {
@@ -26,8 +27,11 @@ impl Scheduler {
                 return Err(format!("système dupliqué: {name}").into());
             }
         }
-        if !seen.contains(INPUT_SYSTEM) || !seen.contains(MOVEMENT_SYSTEM) {
-            return Err("les systèmes input et movement sont obligatoires".into());
+        if !seen.contains(INPUT_SYSTEM)
+            || !seen.contains(MOVEMENT_SYSTEM)
+            || !seen.contains(PHYSICS_SYSTEM)
+        {
+            return Err("les systèmes input, movement et physics sont obligatoires".into());
         }
         let input = order
             .iter()
@@ -37,8 +41,15 @@ impl Scheduler {
             .iter()
             .position(|name| *name == MOVEMENT_SYSTEM)
             .unwrap_or(usize::MAX);
-        if input > movement {
-            return Err("dépendance impossible: input doit précéder movement".into());
+        let physics = order
+            .iter()
+            .position(|name| *name == PHYSICS_SYSTEM)
+            .unwrap_or(usize::MAX);
+        if input > movement || movement > physics {
+            return Err(
+                "dépendance impossible: input doit précéder movement, lui-même avant physics"
+                    .into(),
+            );
         }
         Ok(Self { order })
     }
@@ -65,8 +76,10 @@ mod tests {
 
     #[test]
     fn invalid_orders_are_rejected() {
-        assert!(Scheduler::new(vec![MOVEMENT_SYSTEM, INPUT_SYSTEM]).is_err());
-        assert!(Scheduler::new(vec![INPUT_SYSTEM, INPUT_SYSTEM]).is_err());
-        assert!(Scheduler::new(vec!["unknown", MOVEMENT_SYSTEM]).is_err());
+        assert!(Scheduler::new(vec![MOVEMENT_SYSTEM, INPUT_SYSTEM, PHYSICS_SYSTEM]).is_err());
+        assert!(Scheduler::new(vec![INPUT_SYSTEM, INPUT_SYSTEM, PHYSICS_SYSTEM]).is_err());
+        assert!(Scheduler::new(vec!["unknown", MOVEMENT_SYSTEM, PHYSICS_SYSTEM]).is_err());
+        assert!(Scheduler::new(vec![INPUT_SYSTEM, MOVEMENT_SYSTEM]).is_err());
+        assert!(Scheduler::new(vec![INPUT_SYSTEM, PHYSICS_SYSTEM, MOVEMENT_SYSTEM]).is_err());
     }
 }

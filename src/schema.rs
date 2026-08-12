@@ -42,6 +42,28 @@ pub const SCHEMAS: &[(&str, &str)] = &[
         "visual-diff",
         include_str!("../schemas/visual-diff-v1.json"),
     ),
+    ("scene3d", include_str!("../schemas/scene3d-v1.json")),
+    ("assets3d", include_str!("../schemas/assets3d-v1.json")),
+    ("capture3d", include_str!("../schemas/capture3d-v1.json")),
+    (
+        "visual-diff3d",
+        include_str!("../schemas/visual-diff3d-v1.json"),
+    ),
+    (
+        "m4-certification",
+        include_str!("../schemas/m4-certification-v1.json"),
+    ),
+    ("plugin", include_str!("../schemas/plugin-v1.json")),
+    (
+        "plugin-lock",
+        include_str!("../schemas/plugin-lock-v1.json"),
+    ),
+    ("script", include_str!("../schemas/script-v1.json")),
+    (
+        "script-report",
+        include_str!("../schemas/script-report-v1.json"),
+    ),
+    ("bundle", include_str!("../schemas/bundle-v1.json")),
 ];
 
 #[derive(Serialize)]

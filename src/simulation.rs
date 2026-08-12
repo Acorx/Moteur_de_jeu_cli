@@ -3,11 +3,11 @@ use serde::Serialize;
 use crate::ecs::{EcsStorage, EntityId};
 use crate::replay::{InputCommand, InputEvent};
 use crate::rng::SplitMix64;
-use crate::scheduler::{INPUT_SYSTEM, MOVEMENT_SYSTEM, Scheduler};
+use crate::scheduler::{INPUT_SYSTEM, MOVEMENT_SYSTEM, PHYSICS_SYSTEM, Scheduler};
 use crate::telemetry::{SystemCounters, TELEMETRY_SCHEMA, Telemetry};
 
 use crate::Result;
-use crate::project::{Appearance, Project};
+use crate::project::{Appearance, Collider, Project};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EntityState {
@@ -16,6 +16,8 @@ pub struct EntityState {
     pub position: Vec2,
     pub velocity: Vec2,
     pub appearance: Appearance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<Collider>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -50,6 +52,15 @@ pub struct World {
 impl World {
     pub fn from_project(project: Project) -> Self {
         let storage = EcsStorage::from_project(&project);
+        let scheduler = Scheduler::standard();
+        let counters = scheduler
+            .order()
+            .iter()
+            .map(|name| SystemCounters {
+                name,
+                ..SystemCounters::default()
+            })
+            .collect();
         Self {
             schema: "aetherion.snapshot/v1",
             project: project.project.name,
@@ -57,18 +68,9 @@ impl World {
             tick_rate: project.simulation.tick_rate,
             tick: 0,
             storage,
-            scheduler: Scheduler::standard(),
+            scheduler,
             rng: SplitMix64::new(project.simulation.seed),
-            counters: vec![
-                SystemCounters {
-                    name: INPUT_SYSTEM,
-                    ..SystemCounters::default()
-                },
-                SystemCounters {
-                    name: MOVEMENT_SYSTEM,
-                    ..SystemCounters::default()
-                },
-            ],
+            counters,
         }
     }
 
@@ -89,6 +91,7 @@ impl World {
             position: *self.storage.position(id)?,
             velocity: *self.storage.velocity(id)?,
             appearance: self.storage.appearance(id)?.clone(),
+            collider: self.storage.collider(id).cloned(),
         })
     }
 
@@ -109,7 +112,7 @@ impl World {
     }
 
     pub fn next_random_u64(&mut self) -> u64 {
-        self.counters[0].prng_calls += 1;
+        self.counter_mut(INPUT_SYSTEM).prng_calls += 1;
         self.rng.next_u64()
     }
 
@@ -122,6 +125,7 @@ impl World {
             match self.scheduler.order()[index] {
                 INPUT_SYSTEM => self.run_input(events)?,
                 MOVEMENT_SYSTEM => self.run_movement()?,
+                PHYSICS_SYSTEM => self.run_physics()?,
                 name => return Err(format!("système non exécutable: {name}").into()),
             }
         }
@@ -133,21 +137,35 @@ impl World {
     }
 
     fn run_input(&mut self, events: &[InputEvent]) -> Result<()> {
-        self.counters[0].ticks += 1;
+        self.counter_mut(INPUT_SYSTEM).ticks += 1;
         for event in events {
             self.apply_event(event)?;
-            self.counters[0].events_applied += 1;
-            self.counters[0].entities_visited += 1;
-            self.counters[0].entities_modified += 1;
+            let counter = self.counter_mut(INPUT_SYSTEM);
+            counter.events_applied += 1;
+            counter.entities_visited += 1;
+            counter.entities_modified += 1;
         }
         Ok(())
     }
 
     fn run_movement(&mut self) -> Result<()> {
-        self.counters[1].ticks += 1;
         let visited = self.storage.move_all()?;
-        self.counters[1].entities_visited += visited;
-        self.counters[1].entities_modified += visited;
+        let counter = self.counter_mut(MOVEMENT_SYSTEM);
+        counter.ticks += 1;
+        counter.entities_visited += visited;
+        counter.entities_modified += visited;
+        Ok(())
+    }
+
+    fn run_physics(&mut self) -> Result<()> {
+        let visited = u64::try_from(self.storage.collider_count())
+            .map_err(|_| "nombre de colliders hors limite")?;
+        let collisions = self.storage.resolve_collisions()?;
+        let counter = self.counter_mut(PHYSICS_SYSTEM);
+        counter.ticks += 1;
+        counter.entities_visited += visited;
+        counter.entities_modified += collisions.entities_modified;
+        counter.collisions_resolved += collisions.collisions_resolved;
         Ok(())
     }
 
@@ -181,6 +199,13 @@ impl World {
         self.storage
             .velocity_mut(id)
             .ok_or_else(|| format!("entité inconnue: {id}").into())
+    }
+
+    fn counter_mut(&mut self, name: &'static str) -> &mut SystemCounters {
+        self.counters
+            .iter_mut()
+            .find(|counter| counter.name == name)
+            .expect("compteur associé à un système absent")
     }
 
     pub fn run(&mut self, ticks: u64) -> Result<()> {
@@ -264,12 +289,42 @@ mod tests {
         first.run(3).unwrap();
         second.run(3).unwrap();
         assert_eq!(first.telemetry(), second.telemetry());
-        assert_eq!(first.telemetry().system_order, vec!["input", "movement"]);
-        assert_eq!(first.telemetry().systems[0].ticks, 3);
-        assert_eq!(first.telemetry().systems[1].entities_visited, 6);
+        assert_eq!(
+            first.telemetry().system_order,
+            vec!["input", "movement", "physics"]
+        );
+        let telemetry = first.telemetry();
+        let input = telemetry
+            .systems
+            .iter()
+            .find(|system| system.name == INPUT_SYSTEM)
+            .unwrap();
+        let movement = telemetry
+            .systems
+            .iter()
+            .find(|system| system.name == MOVEMENT_SYSTEM)
+            .unwrap();
+        let physics = telemetry
+            .systems
+            .iter()
+            .find(|system| system.name == PHYSICS_SYSTEM)
+            .unwrap();
+        assert_eq!(input.ticks, 3);
+        assert_eq!(movement.entities_visited, 6);
+        assert_eq!(physics.ticks, 3);
+        assert_eq!(physics.entities_visited, 0);
         let checksum = first.checksum();
         first.next_random_u64();
         assert_eq!(first.checksum(), checksum);
-        assert_eq!(first.telemetry().systems[0].prng_calls, 1);
+        assert_eq!(
+            first
+                .telemetry()
+                .systems
+                .iter()
+                .find(|system| system.name == INPUT_SYSTEM)
+                .unwrap()
+                .prng_calls,
+            1
+        );
     }
 }
