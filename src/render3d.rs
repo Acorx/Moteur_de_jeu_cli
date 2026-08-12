@@ -111,6 +111,9 @@ pub struct Material3d {
     pub color: [u8; 3],
     #[serde(default = "default_opacity")]
     pub opacity: u16,
+    /// External texture asset ID. The CPU renderer intentionally ignores it.
+    #[serde(default)]
+    pub base_color_texture: Option<String>,
 }
 
 impl Default for Material3d {
@@ -119,6 +122,7 @@ impl Default for Material3d {
             id: String::new(),
             color: [255; 3],
             opacity: 1000,
+            base_color_texture: None,
         }
     }
 }
@@ -365,6 +369,7 @@ pub struct ExpandedMeshTriangle3d {
     pub triangle: Triangle,
     pub normals: Option<[[i32; 3]; 3]>,
     pub uvs: Option<[[i32; 2]; 3]>,
+    pub texture: Option<String>,
     pub transform: Transform3d,
 }
 
@@ -399,6 +404,13 @@ pub fn expanded_mesh_triangles(scene: &Scene3d) -> Result<Vec<ExpandedMeshTriang
         if material.opacity > 1000 {
             return Err("scene3d_material_opacity_invalid: attendu 0..1000".into());
         }
+        if material
+            .base_color_texture
+            .as_deref()
+            .is_some_and(|texture| !safe_id(texture))
+        {
+            return Err("scene3d_material_texture_id_invalid".into());
+        }
         materials.insert(material.id.as_str(), material);
     }
     let mut object_ids = BTreeSet::new();
@@ -410,6 +422,7 @@ pub fn expanded_mesh_triangles(scene: &Scene3d) -> Result<Vec<ExpandedMeshTriang
             triangle,
             normals: None,
             uvs: None,
+            texture: None,
             transform: Transform3d::default(),
         })
         .collect::<Vec<_>>();
@@ -457,6 +470,7 @@ pub fn expanded_mesh_triangles(scene: &Scene3d) -> Result<Vec<ExpandedMeshTriang
                 },
                 normals,
                 uvs,
+                texture: material.base_color_texture.clone(),
                 transform: object.transform,
             });
             if result.len() > MAX_TRIANGLES {
@@ -520,7 +534,18 @@ fn transform_vertex(vertex: Vertex3, transform: Transform3d) -> Result<Vertex3> 
 }
 
 pub fn resolve_assets(scene: &mut Scene3d, manifest: &std::path::Path) -> Result<()> {
+    let _ = resolve_assets_with_textures(scene, manifest)?;
+    Ok(())
+}
+
+/// Resolve JSON assets for the CPU path and return binary texture payloads for
+/// the optional GPU path. Texture bytes never become part of `Scene3d`.
+pub fn resolve_assets_with_textures(
+    scene: &mut Scene3d,
+    manifest: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
     let assets = crate::assets3d::load_manifest(manifest)?;
+    let mut textures = std::collections::BTreeMap::new();
     for (_, asset) in assets {
         match asset {
             crate::assets3d::Asset3d::Mesh(mesh) => {
@@ -539,13 +564,17 @@ pub fn resolve_assets(scene: &mut Scene3d, manifest: &std::path::Path) -> Result
                 }
                 scene.materials.push(material);
             }
+            crate::assets3d::Asset3d::Texture(texture) => {
+                textures.insert(texture.id, texture.bytes);
+            }
         }
     }
     scene.meshes.sort_by(|left, right| left.id.cmp(&right.id));
     scene
         .materials
         .sort_by(|left, right| left.id.cmp(&right.id));
-    validate(scene)
+    validate(scene)?;
+    Ok(textures)
 }
 
 fn sample_animation(scene: &Scene3d, animation_id: &str, tick: u64) -> Result<Scene3d> {
@@ -898,6 +927,7 @@ mod tests {
                 id: "material".into(),
                 color: [201, 101, 51],
                 opacity: 500,
+                base_color_texture: None,
             }],
             objects,
             ..scene(Vec::new())
@@ -977,6 +1007,17 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn cpu_render_ignores_external_base_color_texture() {
+        let plain = resource_scene(vec![object("object")]);
+        let mut textured = plain.clone();
+        textured.materials[0].base_color_texture = Some("albedo".into());
+        assert_eq!(
+            render(&plain, 16, 16).unwrap().0,
+            render(&textured, 16, 16).unwrap().0
         );
     }
 

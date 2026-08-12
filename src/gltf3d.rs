@@ -296,6 +296,7 @@ mod runtime {
                 id: id.clone(),
                 color,
                 opacity,
+                base_color_texture: None,
             },
         );
         Ok(id)

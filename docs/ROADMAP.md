@@ -118,7 +118,9 @@ Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validat
 
 **M12.3 présente :** les meshes conservent des normales optionnelles quantifiées à `1_000_000` et des UV optionnels quantifiés à `1_000_000`. Les longueurs sont vérifiées, les normales nulles sont refusées, les scènes sans attributs restent compatibles et le chemin CPU historique n'est pas modifié.
 
-**Prochaines tranches M12 :** cache d'assets par checksum, chargement asynchrone et matériaux textures avec quotas.
+**M12.4 présente :** `Material3d` accepte un ID `base_color_texture`, les manifests acceptent les assets binaires PNG/JPEG, et le backend GPU décode les textures référencées avec quotas 4096×4096/16 777 216 pixels. Le renderer crée un bind group par texture et regroupe les sommets en lots de matériau ; le CPU ignore les textures et reste l'oracle déterministe.
+
+**Prochaines tranches M12 :** cache d'assets par checksum, chargement asynchrone, import des textures glTF et matériaux textures plus riches avec quotas.
 
 ## M8 — Tooling, build et packaging (futur)
 

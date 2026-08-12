@@ -11,6 +11,7 @@ use crate::render3d::{Material3d, Mesh3d};
 pub const MANIFEST_SCHEMA: &str = "aetherion.assets3d/v1";
 pub const MESH_SCHEMA: &str = "aetherion.mesh3d/v1";
 pub const MATERIAL_SCHEMA: &str = "aetherion.material3d/v1";
+pub const MAX_TEXTURE_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_MANIFEST_BYTES: u64 = 1_048_576;
 pub const MAX_ASSETS: usize = 20_000;
 pub const MAX_ASSET_BYTES: u64 = 16 * 1024 * 1024;
@@ -39,12 +40,20 @@ pub struct Asset3dEntry {
 pub enum Asset3dType {
     Mesh,
     Material,
+    Texture,
 }
 
 #[derive(Clone, Debug)]
 pub enum Asset3d {
     Mesh(Mesh3d),
     Material(Material3d),
+    Texture(Texture3d),
+}
+
+#[derive(Clone, Debug)]
+pub struct Texture3d {
+    pub id: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -153,6 +162,18 @@ fn load_entry(root: &Path, entry: &Asset3dEntry) -> Result<Asset3d> {
             }
             Ok(Asset3d::Material(document.material))
         }
+        Asset3dType::Texture => {
+            if bytes.len() as u64 > MAX_TEXTURE_BYTES
+                || bytes.is_empty()
+                || !is_supported_texture(&bytes)
+            {
+                return Err(format!("texture3d_invalid: {}", entry.id).into());
+            }
+            Ok(Asset3d::Texture(Texture3d {
+                id: entry.id.clone(),
+                bytes,
+            }))
+        }
     }
 }
 
@@ -182,6 +203,9 @@ pub fn import(input: &Path, kind: Asset3dType, output: &Path) -> Result<()> {
             }
             validate_id(&document.material.id)?;
             serde_json::to_vec_pretty(&document)
+        }
+        Asset3dType::Texture => {
+            return Err("asset3d_import_texture_not_supported: copiez la texture et mettez a jour le manifeste".into());
         }
     }
     .map_err(|error| format!("asset3d_import_serialize: {error}"))?;
@@ -232,6 +256,10 @@ fn confined(root: &Path, requested: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+fn is_supported_texture(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.starts_with(&[0xff, 0xd8, 0xff])
+}
+
 fn validate_id(id: &str) -> Result<()> {
     if id.is_empty()
         || id.len() > 64
@@ -263,6 +291,29 @@ mod tests {
     fn traversal_is_rejected() {
         let root = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert!(confined(&root, Path::new("../mesh.json")).is_err());
+    }
+
+    #[test]
+    fn binary_texture_assets_are_checksum_checked_and_loaded() {
+        let directory = temporary_directory("texture");
+        fs::create_dir_all(&directory).unwrap();
+        let texture = b"\x89PNG\r\n\x1a\ntexture";
+        fs::write(directory.join("albedo.png"), texture).unwrap();
+        let manifest = serde_json::json!({
+            "schema": MANIFEST_SCHEMA,
+            "assets": [{
+                "id": "albedo",
+                "path": "albedo.png",
+                "type": "texture",
+                "size": texture.len(),
+                "checksum": checksum_bytes(texture)
+            }]
+        });
+        let manifest_path = directory.join("assets.json");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let loaded = load_manifest(&manifest_path).unwrap();
+        assert!(matches!(loaded["albedo"], Asset3d::Texture(_)));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

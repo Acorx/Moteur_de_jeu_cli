@@ -32,6 +32,7 @@ pub struct BenchmarkSummary {
 
 #[cfg(feature = "render-gpu")]
 mod runtime {
+    use std::collections::BTreeMap;
     use std::mem::size_of;
     use std::path::Path;
     use std::sync::Arc;
@@ -40,6 +41,7 @@ mod runtime {
 
     use bytemuck::{Pod, Zeroable};
     use glam::{Mat4, Vec3};
+    use image::GenericImageView;
     use wgpu::util::DeviceExt;
     use winit::dpi::PhysicalSize;
     use winit::event::{Event, WindowEvent};
@@ -53,6 +55,8 @@ mod runtime {
     const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
     const MIN_DEPTH: f32 = 0.1;
     const MAX_DEPTH: f32 = 100_000.0;
+    const MAX_TEXTURE_DIMENSION: u32 = 4096;
+    const MAX_TEXTURE_PIXELS: u64 = 16_777_216;
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -126,15 +130,28 @@ mod runtime {
         }
     }
 
+    struct GpuBatch {
+        vertex_buffer: wgpu::Buffer,
+        index_buffer: wgpu::Buffer,
+        index_count: u32,
+        texture_index: usize,
+    }
+
+    struct GpuTexture {
+        _texture: wgpu::Texture,
+        _view: wgpu::TextureView,
+        _sampler: wgpu::Sampler,
+        bind_group: wgpu::BindGroup,
+    }
+
     struct Renderer {
         surface: wgpu::Surface<'static>,
         device: wgpu::Device,
         queue: wgpu::Queue,
         config: wgpu::SurfaceConfiguration,
         pipeline: wgpu::RenderPipeline,
-        vertex_buffer: wgpu::Buffer,
-        index_buffer: wgpu::Buffer,
-        index_count: u32,
+        batches: Vec<GpuBatch>,
+        textures: Vec<GpuTexture>,
         camera_buffer: wgpu::Buffer,
         camera_bind_group: wgpu::BindGroup,
         depth: DepthTexture,
@@ -145,7 +162,11 @@ mod runtime {
     }
 
     impl Renderer {
-        async fn new(window: &Arc<Window>, scene: &Scene3d) -> Result<Self> {
+        async fn new(
+            window: &Arc<Window>,
+            scene: &Scene3d,
+            texture_bytes: &BTreeMap<String, Vec<u8>>,
+        ) -> Result<Self> {
             let scene_size = window.inner_size();
             let instance = wgpu::Instance::default();
             let surface = instance
@@ -195,17 +216,7 @@ mod runtime {
             let config = surface_configuration(format, present_mode, alpha_mode, scene_size);
             surface.configure(&device, &config);
 
-            let (vertices, indices) = scene_vertices(scene)?;
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("aetherion-gpu-vertices"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("aetherion-gpu-indices"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+            let batch_data = scene_batches(scene, texture_bytes)?;
 
             let camera_uniform = CameraUniform {
                 view_projection: camera_matrix(scene.camera, scene_size).to_cols_array_2d(),
@@ -237,13 +248,63 @@ mod runtime {
                 }],
             });
 
+            let texture_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("aetherion-gpu-texture-layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+            let (textures, texture_indices) =
+                create_gpu_textures(&device, &queue, &texture_layout, &batch_data, texture_bytes)?;
+            let batches = batch_data
+                .into_iter()
+                .map(|batch| {
+                    let index_count =
+                        u32::try_from(batch.indices.len()).map_err(|_| "render_gpu_index_quota")?;
+                    let vertex_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("aetherion-gpu-vertices"),
+                            contents: bytemuck::cast_slice(&batch.vertices),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
+                    let index_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("aetherion-gpu-indices"),
+                            contents: bytemuck::cast_slice(&batch.indices),
+                            usage: wgpu::BufferUsages::INDEX,
+                        });
+                    Ok(GpuBatch {
+                        vertex_buffer,
+                        index_buffer,
+                        index_count,
+                        texture_index: texture_indices[&batch.texture],
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("aetherion-gpu-shader"),
                 source: wgpu::ShaderSource::Wgsl(SHADER.into()),
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("aetherion-gpu-pipeline-layout"),
-                bind_group_layouts: &[&camera_layout],
+                bind_group_layouts: &[&camera_layout, &texture_layout],
                 push_constant_ranges: &[],
             });
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -290,9 +351,8 @@ mod runtime {
                 queue,
                 config,
                 pipeline,
-                vertex_buffer,
-                index_buffer,
-                index_count: u32::try_from(indices.len()).map_err(|_| "render_gpu_index_quota")?,
+                batches,
+                textures,
                 camera_buffer,
                 camera_bind_group,
                 depth,
@@ -360,9 +420,12 @@ mod runtime {
                 });
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..self.index_count, 0, 0..1);
+                for batch in &self.batches {
+                    pass.set_bind_group(1, &self.textures[batch.texture_index].bind_group, &[]);
+                    pass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+                    pass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..batch.index_count, 0, 0..1);
+                }
             }
             self.queue.submit([encoder.finish()]);
             frame.present();
@@ -388,12 +451,35 @@ mod runtime {
         }
     }
 
-    pub(super) fn scene_vertices(scene: &Scene3d) -> Result<(Vec<Vertex>, Vec<u32>)> {
+    pub(super) struct BatchData {
+        pub(super) texture: Option<String>,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    }
+
+    type TextureIndices = BTreeMap<Option<String>, usize>;
+    type GpuTextureSet = (Vec<GpuTexture>, TextureIndices);
+
+    pub(super) fn scene_batches(
+        scene: &Scene3d,
+        texture_bytes: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<Vec<BatchData>> {
         let triangles = render3d::expanded_mesh_triangles(scene)?;
-        let mut vertices = Vec::with_capacity(triangles.len() * 3);
-        let mut indices = Vec::with_capacity(triangles.len() * 3);
+        let mut batches = BTreeMap::<Option<String>, BatchData>::new();
         for expanded in triangles {
-            let base = u32::try_from(vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
+            let texture = expanded.texture.clone();
+            if let Some(id) = texture.as_ref()
+                && !texture_bytes.contains_key(id)
+            {
+                return Err(format!("render_gpu_texture_missing: {id}").into());
+            }
+            let batch = batches.entry(texture.clone()).or_insert_with(|| BatchData {
+                texture,
+                vertices: Vec::new(),
+                indices: Vec::new(),
+            });
+            let base =
+                u32::try_from(batch.vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
             let color = expanded
                 .triangle
                 .color
@@ -420,16 +506,127 @@ mod runtime {
                         ]
                     })
                     .unwrap_or([0.0, 0.0]);
-                vertices.push(Vertex {
+                batch.vertices.push(Vertex {
                     position,
                     color,
                     normal,
                     uv,
                 });
             }
-            indices.extend([base, base + 1, base + 2]);
+            batch.indices.extend([base, base + 1, base + 2]);
         }
-        Ok((vertices, indices))
+        Ok(batches.into_values().collect())
+    }
+
+    fn create_gpu_textures(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        batches: &[BatchData],
+        texture_bytes: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<GpuTextureSet> {
+        let mut keys = BTreeMap::<Option<String>, ()>::new();
+        for batch in batches {
+            keys.insert(batch.texture.clone(), ());
+        }
+        let mut textures = Vec::with_capacity(keys.len());
+        let mut indices = BTreeMap::new();
+        for (key, ()) in keys {
+            let (width, height, pixels) = key
+                .as_ref()
+                .map(|id| {
+                    texture_bytes
+                        .get(id)
+                        .ok_or_else(|| format!("render_gpu_texture_missing: {id}").into())
+                        .and_then(|bytes| decode_texture(id, bytes))
+                })
+                .unwrap_or_else(|| Ok((1, 1, vec![255, 255, 255, 255])))?;
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("aetherion-gpu-base-color"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &pixels,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * width),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("aetherion-gpu-base-color-sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..wgpu::SamplerDescriptor::default()
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aetherion-gpu-base-color-bind-group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+            let index = textures.len();
+            indices.insert(key, index);
+            textures.push(GpuTexture {
+                _texture: texture,
+                _view: view,
+                _sampler: sampler,
+                bind_group,
+            });
+        }
+        Ok((textures, indices))
+    }
+
+    fn decode_texture(id: &str, bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
+        let decoded = image::load_from_memory(bytes)
+            .map_err(|error| format!("render_gpu_texture_decode: {id}: {error}"))?;
+        let (width, height) = decoded.dimensions();
+        let pixels = u64::from(width)
+            .checked_mul(u64::from(height))
+            .ok_or("render_gpu_texture_quota")?;
+        if width == 0
+            || height == 0
+            || width > MAX_TEXTURE_DIMENSION
+            || height > MAX_TEXTURE_DIMENSION
+            || pixels > MAX_TEXTURE_PIXELS
+        {
+            return Err(format!("render_gpu_texture_quota: {id}").into());
+        }
+        Ok((width, height, decoded.to_rgba8().into_raw()))
     }
 
     fn transformed_normal(normal: [i32; 3], transform: Transform3d) -> [f32; 3] {
@@ -488,16 +685,17 @@ mod runtime {
         )
     }
 
-    fn load_scene(scene_path: &Path, assets_path: Option<&Path>) -> Result<Scene3d> {
-        let scene = if let Some(assets_path) = assets_path {
+    fn load_scene(
+        scene_path: &Path,
+        assets_path: Option<&Path>,
+    ) -> Result<(Scene3d, BTreeMap<String, Vec<u8>>)> {
+        if let Some(assets_path) = assets_path {
             let mut scene = render3d::load_unresolved(scene_path)?;
-            render3d::resolve_assets(&mut scene, assets_path)?;
-            scene
+            let textures = render3d::resolve_assets_with_textures(&mut scene, assets_path)?;
+            Ok((scene, textures))
         } else {
-            render3d::load(scene_path)?
-        };
-        render3d::validate(&scene)?;
-        Ok(scene)
+            Ok((render3d::load(scene_path)?, BTreeMap::new()))
+        }
     }
 
     pub fn run(
@@ -557,7 +755,7 @@ mod runtime {
         if width == 0 || height == 0 {
             return Err("render_gpu_dimensions_invalid".into());
         }
-        let scene = load_scene(scene_path, assets_path)?;
+        let (scene, texture_bytes) = load_scene(scene_path, assets_path)?;
         let triangle_count = render3d::expanded_triangles(&scene)?.len();
         if max_frames == Some(0) {
             return Ok((
@@ -585,7 +783,7 @@ mod runtime {
                 .build(&event_loop)
                 .map_err(|error| format!("render_gpu_window: {error}"))?,
         );
-        let mut renderer = pollster::block_on(Renderer::new(&window, &scene))?;
+        let mut renderer = pollster::block_on(Renderer::new(&window, &scene, &texture_bytes))?;
         let adapter = renderer.adapter.clone();
         let started = Instant::now();
         let frames_rendered = Arc::new(AtomicU64::new(0));
@@ -638,6 +836,12 @@ struct Camera {
 @group(0) @binding(0)
 var<uniform> camera: Camera;
 
+@group(1) @binding(0)
+var base_color_texture: texture_2d<f32>;
+
+@group(1) @binding(1)
+var base_color_sampler: sampler;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
@@ -667,7 +871,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let light_direction = normalize(vec3<f32>(0.45, 0.65, 1.0));
     let diffuse = max(dot(normalize(input.normal), light_direction), 0.0);
     let intensity = 0.25 + 0.75 * diffuse;
-    return vec4<f32>(input.color * intensity, 1.0);
+    let albedo = textureSample(base_color_texture, base_color_sampler, input.uv).rgb;
+    return vec4<f32>(input.color * albedo * intensity, 1.0);
 }
 "#;
 }
@@ -718,9 +923,48 @@ pub fn benchmark(
 
 #[cfg(all(test, feature = "render-gpu"))]
 mod tests {
-    use super::runtime::{camera_matrix, scene_vertices};
-    use crate::render3d::{Camera3d, SCENE_SCHEMA, Scene3d};
+    use super::runtime::{camera_matrix, scene_batches};
+    use crate::render3d::{
+        Camera3d, Material3d, Mesh3d, Object3d, SCENE_SCHEMA, Scene3d, Transform3d, Vertex3,
+    };
     use winit::dpi::PhysicalSize;
+
+    fn textured_scene() -> Scene3d {
+        Scene3d {
+            schema: SCENE_SCHEMA.into(),
+            camera: Camera3d::default(),
+            background: [0, 0, 0],
+            triangles: Vec::new(),
+            meshes: vec![Mesh3d {
+                id: "mesh".into(),
+                vertices: vec![
+                    Vertex3 { x: 0, y: 0, z: 1 },
+                    Vertex3 { x: 1, y: 0, z: 1 },
+                    Vertex3 { x: 0, y: 1, z: 1 },
+                ],
+                triangles: vec![[0, 1, 2]],
+                normals: Vec::new(),
+                uvs: vec![
+                    [0, 0],
+                    [crate::render3d::UV_SCALE, 0],
+                    [0, crate::render3d::UV_SCALE],
+                ],
+            }],
+            materials: vec![Material3d {
+                id: "material".into(),
+                color: [255, 255, 255],
+                opacity: 1000,
+                base_color_texture: Some("albedo".into()),
+            }],
+            objects: vec![Object3d {
+                id: "object".into(),
+                mesh: "mesh".into(),
+                material: "material".into(),
+                transform: Transform3d::default(),
+            }],
+            animations: Vec::new(),
+        }
+    }
 
     #[test]
     fn camera_matrix_is_finite_and_scene_conversion_is_bounded() {
@@ -740,8 +984,18 @@ mod tests {
             objects: Vec::new(),
             animations: Vec::new(),
         };
-        let (vertices, indices) = scene_vertices(&scene).unwrap();
-        assert!(vertices.is_empty());
-        assert!(indices.is_empty());
+        let batches = scene_batches(&scene, &std::collections::BTreeMap::new()).unwrap();
+        assert!(batches.is_empty());
+    }
+
+    #[test]
+    fn textured_batches_require_and_retain_external_texture_assets() {
+        let scene = textured_scene();
+        assert!(scene_batches(&scene, &std::collections::BTreeMap::new()).is_err());
+        let mut textures = std::collections::BTreeMap::new();
+        textures.insert("albedo".into(), vec![0; 4]);
+        let batches = scene_batches(&scene, &textures).unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].texture.as_deref(), Some("albedo"));
     }
 }

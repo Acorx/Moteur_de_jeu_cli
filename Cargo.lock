@@ -31,6 +31,7 @@ dependencies = [
  "bytemuck",
  "glam",
  "gltf",
+ "image",
  "pollster",
  "serde",
  "serde_json",
