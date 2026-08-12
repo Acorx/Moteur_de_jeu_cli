@@ -8,6 +8,7 @@ pub const REPORT_SCHEMA: &str = "aetherion.gltf-import/v1";
 pub const GLTF_UNIT_SCALE: i32 = 1000;
 pub const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_BUFFER_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_IMAGES: usize = 4096;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ImportSummary {
@@ -31,7 +32,10 @@ mod runtime {
     use gltf::mesh::Mode;
     use serde_json::to_vec_pretty;
 
-    use super::{GLTF_UNIT_SCALE, ImportSummary, MAX_BUFFER_BYTES, MAX_INPUT_BYTES, REPORT_SCHEMA};
+    use super::{
+        GLTF_UNIT_SCALE, ImportSummary, MAX_BUFFER_BYTES, MAX_IMAGES, MAX_INPUT_BYTES,
+        REPORT_SCHEMA,
+    };
     use crate::Result;
     use crate::render3d::{self, Material3d, Mesh3d, Object3d, SCENE_SCHEMA, Scene3d, Transform3d};
 
@@ -49,8 +53,18 @@ mod runtime {
         if metadata.len() > MAX_INPUT_BYTES {
             return Err("gltf_import_too_large: plafond 16777216 octets".into());
         }
-        let (document, buffers, _images) =
-            gltf::import(input).map_err(|error| format!("gltf_import_invalid: {error}"))?;
+        let gltf =
+            gltf::Gltf::open(input).map_err(|error| format!("gltf_import_invalid: {error}"))?;
+        let gltf::Gltf { document, blob } = gltf;
+        if document.images().count() > MAX_IMAGES {
+            return Err("gltf_import_image_quota: plafond 4096 images".into());
+        }
+        let base = input
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let buffers = gltf::import_buffers(&document, Some(base), blob)
+            .map_err(|error| format!("gltf_import_buffers_invalid: {error}"))?;
         let buffer_bytes = buffers.iter().try_fold(0_u64, |total, buffer| {
             total
                 .checked_add(buffer.0.len() as u64)

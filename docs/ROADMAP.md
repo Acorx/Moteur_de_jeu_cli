@@ -114,7 +114,7 @@ Le chemin headless par défaut reste compilable et exécutable sans dépendances
 
 **Présent et couvert :** feature `gltf-import` optionnelle, commande `gltf-import --input FILE --output FILE`, support glTF/GLB, selection de la scene par defaut, traversal hierarchique des noeuds, composition des transformations, import des positions et indices de primitives triangulees, conversion des couleurs PBR de base et publication canonique `aetherion.scene3d/v1`.
 
-Les quotas d'entree (16 MiB), buffers (64 MiB), validation des nombres, overflow de quantification, primitives non triangulees, indices hors limites et sorties existantes sont refuses avec des erreurs stables. Les textures, skins, morph targets, normales, UV, animations et materiaux textures restent explicitement futures. `render-gpu` active automatiquement cette tranche afin qu'un fichier importe puisse etre affiche par `gpu-demo`.
+Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validation des nombres, overflow de quantification, primitives non triangulees, indices hors limites et sorties existantes sont refuses avec des erreurs stables. Les images ne sont pas decodees dans cette tranche. Les textures, skins, morph targets, normales, UV, animations et materiaux textures restent explicitement futures. `render-gpu` active automatiquement cette tranche afin qu'un fichier importe puisse etre affiche par `gpu-demo`.
 
 **Prochaines tranches M12 :** conserver normales/UV dans un format de mesh v2 retrocompatible, cache d'assets par checksum, chargement asynchrone et materiaux textures avec quotas.
 
