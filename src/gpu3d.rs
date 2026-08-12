@@ -23,7 +23,7 @@ mod runtime {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use bytemuck::{Pod, Zeroable};
-    use glam::Mat4;
+    use glam::{Mat4, Vec3};
     use wgpu::util::DeviceExt;
     use winit::dpi::PhysicalSize;
     use winit::event::{Event, WindowEvent};
@@ -43,6 +43,7 @@ mod runtime {
     pub(super) struct Vertex {
         position: [f32; 3],
         color: [f32; 3],
+        normal: [f32; 3],
     }
 
     impl Vertex {
@@ -59,6 +60,11 @@ mod runtime {
                     wgpu::VertexAttribute {
                         offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
                         shader_location: 1,
+                        format: wgpu::VertexFormat::Float32x3,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 6]>() as wgpu::BufferAddress,
+                        shader_location: 2,
                         format: wgpu::VertexFormat::Float32x3,
                     },
                 ],
@@ -366,19 +372,36 @@ mod runtime {
             let color = triangle
                 .color
                 .map(|channel| f32::from(channel) / f32::from(u8::MAX));
-            for vertex in triangle.vertices {
+            let positions = triangle.vertices.map(|vertex| {
+                [
+                    vertex.x as f32,
+                    vertex.y as f32,
+                    -(vertex.z - scene.camera.z) as f32,
+                ]
+            });
+            let normal = flat_normal(positions);
+            for position in positions {
                 vertices.push(Vertex {
-                    position: [
-                        vertex.x as f32,
-                        vertex.y as f32,
-                        -(vertex.z - scene.camera.z) as f32,
-                    ],
+                    position,
                     color,
+                    normal,
                 });
             }
             indices.extend([base, base + 1, base + 2]);
         }
         Ok((vertices, indices))
+    }
+
+    fn flat_normal(positions: [[f32; 3]; 3]) -> [f32; 3] {
+        let first = Vec3::from_array(positions[0]);
+        let second = Vec3::from_array(positions[1]);
+        let third = Vec3::from_array(positions[2]);
+        let cross = (second - first).cross(third - first);
+        if cross.length_squared() <= f32::EPSILON {
+            Vec3::Z.to_array()
+        } else {
+            cross.normalize().to_array()
+        }
     }
 
     pub(super) fn camera_matrix(camera: Camera3d, size: PhysicalSize<u32>) -> Mat4 {
@@ -486,11 +509,13 @@ var<uniform> camera: Camera;
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
+    @location(2) normal: vec3<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
+    @location(1) normal: vec3<f32>,
 };
 
 @vertex
@@ -498,12 +523,16 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     output.position = camera.view_projection * vec4<f32>(input.position, 1.0);
     output.color = input.color;
+    output.normal = input.normal;
     return output;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(input.color, 1.0);
+    let light_direction = normalize(vec3<f32>(0.45, 0.65, 1.0));
+    let diffuse = max(dot(normalize(input.normal), light_direction), 0.0);
+    let intensity = 0.25 + 0.75 * diffuse;
+    return vec4<f32>(input.color * intensity, 1.0);
 }
 "#;
 }
