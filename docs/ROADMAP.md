@@ -126,9 +126,11 @@ Les quotas d'entree (16 MiB), buffers (64 MiB), images declarees (4096), validat
 
 ## M15 — Préparation GPU et visibilité
 
-**M15.1 tranche présente :** le backend GPU calcule une AABB agrégée par objet après transformation entière, teste son intersection avec le volume orthographique et n'upload pas les objets entièrement hors champ. Les rapports `gpu-demo` et `gpu-benchmark` publient `objects`, `culled_objects`, `triangles` effectivement préparés et `draw_calls`. Cette tranche ne prétend pas encore fournir de l'instancing : la géométrie locale et l'instance buffer seront introduits séparément.
+**M15.1 présente :** le backend GPU calcule une AABB agrégée par objet après transformation entière, teste son intersection avec le volume orthographique et n'upload pas les objets entièrement hors champ. Les rapports `gpu-demo` et `gpu-benchmark` publient `objects`, `culled_objects`, `triangles` effectivement préparés et `draw_calls`.
 
-**Prochaines tranches M15 :** géométrie locale réutilisable, instance buffers, réduction des draw calls, puis LOD et culling GPU.
+**M15.2 présente :** la préparation GPU construit une géométrie locale par lot `(mesh, material, texture)` et un instance buffer contenant les matrices modèle et normale de chaque objet visible. Le renderer exécute un draw indexed instancié par lot au lieu de dupliquer les sommets et de dessiner chaque objet séparément. Les meshes avec normales conservent leurs indices et leurs sommets partagés ; les meshes historiques sans normales ne dupliquent les sommets que par face pour préserver le flat-shading. Les rapports et le chemin CPU restent inchangés sur le plan déterministe.
+
+**Prochaines tranches M15 :** cache de géométrie GPU et pré-calcul des AABB locales, LOD, puis culling GPU lorsque le bénéfice et les contraintes multi-adaptateurs seront mesurés.
 
 ## M8 — Tooling, build et packaging (futur)
 

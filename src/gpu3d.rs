@@ -106,6 +106,64 @@ mod runtime {
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+    struct Instance {
+        model: [[f32; 4]; 4],
+        normal_model: [[f32; 4]; 4],
+    }
+
+    impl Instance {
+        fn descriptor<'a>() -> wgpu::VertexBufferLayout<'a> {
+            wgpu::VertexBufferLayout {
+                array_stride: size_of::<Self>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 4,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                        shader_location: 5,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                        shader_location: 6,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                        shader_location: 7,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                        shader_location: 8,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 20]>() as wgpu::BufferAddress,
+                        shader_location: 9,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 24]>() as wgpu::BufferAddress,
+                        shader_location: 10,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: size_of::<[f32; 28]>() as wgpu::BufferAddress,
+                        shader_location: 11,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                ],
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     struct CameraUniform {
         view_projection: [[f32; 4]; 4],
     }
@@ -139,7 +197,9 @@ mod runtime {
     struct GpuBatch {
         vertex_buffer: wgpu::Buffer,
         index_buffer: wgpu::Buffer,
+        instance_buffer: wgpu::Buffer,
         index_count: u32,
+        instance_count: u32,
         texture_index: usize,
     }
 
@@ -299,10 +359,20 @@ mod runtime {
                             contents: bytemuck::cast_slice(&batch.indices),
                             usage: wgpu::BufferUsages::INDEX,
                         });
+                    let instance_count = u32::try_from(batch.instances.len())
+                        .map_err(|_| "render_gpu_instance_quota")?;
+                    let instance_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("aetherion-gpu-instances"),
+                            contents: bytemuck::cast_slice(&batch.instances),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
                     Ok(GpuBatch {
                         vertex_buffer,
                         index_buffer,
+                        instance_buffer,
                         index_count,
+                        instance_count,
                         texture_index: texture_indices[&batch.texture],
                     })
                 })
@@ -323,7 +393,7 @@ mod runtime {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: "vs_main",
-                    buffers: &[Vertex::descriptor()],
+                    buffers: &[Vertex::descriptor(), Instance::descriptor()],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
@@ -436,8 +506,9 @@ mod runtime {
                 for batch in &self.batches {
                     pass.set_bind_group(1, &self.textures[batch.texture_index].bind_group, &[]);
                     pass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+                    pass.set_vertex_buffer(1, batch.instance_buffer.slice(..));
                     pass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..batch.index_count, 0, 0..1);
+                    pass.draw_indexed(0..batch.index_count, 0, 0..batch.instance_count);
                 }
             }
             self.queue.submit([encoder.finish()]);
@@ -466,8 +537,16 @@ mod runtime {
 
     pub(super) struct BatchData {
         pub(super) texture: Option<String>,
-        vertices: Vec<Vertex>,
-        indices: Vec<u32>,
+        pub(super) vertices: Vec<Vertex>,
+        pub(super) indices: Vec<u32>,
+        instances: Vec<Instance>,
+    }
+
+    impl BatchData {
+        #[cfg(test)]
+        pub(super) fn instance_count(&self) -> usize {
+            self.instances.len()
+        }
     }
 
     type TextureIndices = BTreeMap<Option<String>, usize>;
@@ -485,74 +564,202 @@ mod runtime {
         texture_bytes: &BTreeMap<String, Vec<u8>>,
         viewport: PhysicalSize<u32>,
     ) -> Result<PreparedScene> {
-        let triangles = render3d::expanded_mesh_triangles(scene)?;
-        let visible_objects = visible_objects(&triangles, scene.camera, viewport);
-        let mut batches = BTreeMap::<Option<String>, BatchData>::new();
-        let mut rendered_triangles = 0;
-        for expanded in triangles {
-            if expanded
-                .object
-                .as_ref()
-                .is_some_and(|id| !visible_objects.contains(id))
-            {
+        let expanded = render3d::expanded_mesh_triangles(scene)?;
+        let visible = visible_objects(&expanded, scene.camera, viewport);
+        let mut batches = BTreeMap::<(String, String, Option<String>), BatchData>::new();
+        let mut rendered_triangles: usize = 0;
+        let mut meshes = BTreeMap::new();
+        for mesh in &scene.meshes {
+            meshes.insert(mesh.id.as_str(), mesh);
+        }
+        let mut materials = BTreeMap::new();
+        for material in &scene.materials {
+            materials.insert(material.id.as_str(), material);
+        }
+
+        for object in &scene.objects {
+            if !visible.contains(&object.id) {
                 continue;
             }
-            rendered_triangles += 1;
-            let texture = expanded.texture.clone();
+            let mesh = meshes
+                .get(object.mesh.as_str())
+                .ok_or("render_gpu_mesh_reference_missing")?;
+            let material = materials
+                .get(object.material.as_str())
+                .ok_or("render_gpu_material_reference_missing")?;
+            let texture = material.base_color_texture.clone();
             if let Some(id) = texture.as_ref()
                 && !texture_bytes.contains_key(id)
             {
                 return Err(format!("render_gpu_texture_missing: {id}").into());
             }
-            let batch = batches.entry(texture.clone()).or_insert_with(|| BatchData {
-                texture,
-                vertices: Vec::new(),
-                indices: Vec::new(),
-            });
-            let base =
-                u32::try_from(batch.vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
-            let color = expanded
-                .triangle
-                .color
-                .map(|channel| f32::from(channel) / f32::from(u8::MAX));
-            let positions = expanded.triangle.vertices.map(|vertex| {
-                [
-                    vertex.x as f32,
-                    vertex.y as f32,
-                    -(vertex.z - scene.camera.z) as f32,
-                ]
-            });
-            let flat = flat_normal(positions);
-            for (slot, position) in positions.into_iter().enumerate() {
-                let normal = expanded
-                    .normals
-                    .map(|normals| transformed_normal(normals[slot], expanded.transform))
-                    .unwrap_or(flat);
-                let uv = expanded
-                    .uvs
-                    .map(|uvs| {
-                        [
-                            uvs[slot][0] as f32 / UV_SCALE as f32,
-                            uvs[slot][1] as f32 / UV_SCALE as f32,
-                        ]
-                    })
-                    .unwrap_or([0.0, 0.0]);
-                batch.vertices.push(Vertex {
-                    position,
-                    color,
-                    normal,
-                    uv,
-                });
+            let key = (mesh.id.clone(), material.id.clone(), texture.clone());
+            if !batches.contains_key(&key) {
+                let (vertices, indices) = mesh_geometry(mesh, material, scene.background)?;
+                batches.insert(
+                    key.clone(),
+                    BatchData {
+                        texture,
+                        vertices,
+                        indices,
+                        instances: Vec::new(),
+                    },
+                );
             }
-            batch.indices.extend([base, base + 1, base + 2]);
+            let batch = batches.get_mut(&key).ok_or("render_gpu_batch_missing")?;
+            batch
+                .instances
+                .push(instance_for(object.transform, scene.camera.z));
+            rendered_triangles = rendered_triangles
+                .checked_add(mesh.triangles.len())
+                .ok_or("render_gpu_triangle_quota")?;
         }
+
+        if !scene.triangles.is_empty() {
+            let key = ("__legacy".into(), "__legacy".into(), None);
+            let mut batch = BatchData {
+                texture: None,
+                vertices: Vec::with_capacity(scene.triangles.len() * 3),
+                indices: Vec::with_capacity(scene.triangles.len() * 3),
+                instances: vec![instance_for(Transform3d::default(), scene.camera.z)],
+            };
+            for triangle in &scene.triangles {
+                let base =
+                    u32::try_from(batch.vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
+                let positions = triangle.vertices.map(base_position);
+                let normal = flat_normal(positions);
+                let color = triangle
+                    .color
+                    .map(|channel| f32::from(channel) / f32::from(u8::MAX));
+                batch
+                    .vertices
+                    .extend(positions.into_iter().map(|position| Vertex {
+                        position,
+                        color,
+                        normal,
+                        uv: [0.0, 0.0],
+                    }));
+                batch.indices.extend([base, base + 1, base + 2]);
+            }
+            rendered_triangles = rendered_triangles
+                .checked_add(scene.triangles.len())
+                .ok_or("render_gpu_triangle_quota")?;
+            batches.insert(key, batch);
+        }
+
         let objects = scene.objects.len();
         Ok(PreparedScene {
             batches: batches.into_values().collect(),
             objects,
-            culled_objects: objects.saturating_sub(visible_objects.len()),
+            culled_objects: objects.saturating_sub(visible.len()),
             triangles: rendered_triangles,
         })
+    }
+
+    fn mesh_geometry(
+        mesh: &render3d::Mesh3d,
+        material: &render3d::Material3d,
+        background: [u8; 3],
+    ) -> Result<(Vec<Vertex>, Vec<u32>)> {
+        let color = material_color(material, background);
+        if mesh.normals.is_empty() {
+            let mut vertices = Vec::with_capacity(mesh.triangles.len() * 3);
+            let mut indices = Vec::with_capacity(mesh.triangles.len() * 3);
+            for face in &mesh.triangles {
+                let base = u32::try_from(vertices.len()).map_err(|_| "render_gpu_vertex_quota")?;
+                let positions = face.map(|index| base_position(mesh.vertices[index as usize]));
+                let normal = flat_normal(positions);
+                vertices.extend(positions.into_iter().map(|position| Vertex {
+                    position,
+                    color,
+                    normal,
+                    uv: [0.0, 0.0],
+                }));
+                indices.extend([base, base + 1, base + 2]);
+            }
+            return Ok((vertices, indices));
+        }
+
+        let vertices = mesh
+            .vertices
+            .iter()
+            .enumerate()
+            .map(|(index, vertex)| Vertex {
+                position: base_position(*vertex),
+                color,
+                normal: source_normal(mesh.normals[index]),
+                uv: mesh
+                    .uvs
+                    .get(index)
+                    .map(|uv| {
+                        [
+                            uv[0] as f32 / UV_SCALE as f32,
+                            uv[1] as f32 / UV_SCALE as f32,
+                        ]
+                    })
+                    .unwrap_or([0.0, 0.0]),
+            })
+            .collect();
+        let indices = mesh
+            .triangles
+            .iter()
+            .flat_map(|face| face.iter().copied())
+            .collect();
+        Ok((vertices, indices))
+    }
+
+    fn material_color(material: &render3d::Material3d, background: [u8; 3]) -> [f32; 3] {
+        [0, 1, 2].map(|channel| {
+            let value = (u32::from(material.color[channel]) * u32::from(material.opacity)
+                + u32::from(background[channel]) * (1000 - u32::from(material.opacity)))
+                / 1000;
+            f32::from(value as u8) / f32::from(u8::MAX)
+        })
+    }
+
+    fn base_position(vertex: render3d::Vertex3) -> [f32; 3] {
+        [vertex.x as f32, vertex.y as f32, -vertex.z as f32]
+    }
+
+    fn source_normal(normal: [i32; 3]) -> [f32; 3] {
+        let value = Vec3::new(
+            -(normal[0] as f32 / NORMAL_SCALE as f32),
+            -(normal[1] as f32 / NORMAL_SCALE as f32),
+            normal[2] as f32 / NORMAL_SCALE as f32,
+        );
+        if value.length_squared() <= f32::EPSILON {
+            Vec3::Z.to_array()
+        } else {
+            value.normalize().to_array()
+        }
+    }
+
+    fn instance_for(transform: Transform3d, camera_z: i32) -> Instance {
+        let scale = Mat4::from_scale(Vec3::new(
+            transform.scale[0] as f32 / 1000.0,
+            transform.scale[1] as f32 / 1000.0,
+            transform.scale[2] as f32 / 1000.0,
+        ));
+        let rotate_x = Mat4::from_rotation_x((transform.rotation[0] as f32).to_radians());
+        let rotate_y = Mat4::from_rotation_y((transform.rotation[1] as f32).to_radians());
+        let rotate_z = Mat4::from_rotation_z((transform.rotation[2] as f32).to_radians());
+        let object = Mat4::from_translation(Vec3::new(
+            transform.translation[0] as f32,
+            transform.translation[1] as f32,
+            transform.translation[2] as f32,
+        )) * rotate_z
+            * rotate_y
+            * rotate_x
+            * scale;
+        let reflection = Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0));
+        let model = Mat4::from_translation(Vec3::new(0.0, 0.0, camera_z as f32))
+            * reflection
+            * object
+            * reflection;
+        Instance {
+            model: model.to_cols_array_2d(),
+            normal_model: model.inverse().transpose().to_cols_array_2d(),
+        }
     }
 
     fn visible_objects(
@@ -708,36 +915,6 @@ mod runtime {
             return Err(format!("render_gpu_texture_quota: {id}").into());
         }
         Ok((width, height, decoded.to_rgba8().into_raw()))
-    }
-
-    fn transformed_normal(normal: [i32; 3], transform: Transform3d) -> [f32; 3] {
-        // The presentation camera mirrors Z while keeping triangle winding;
-        // negate X/Y so imported smooth normals agree with the flat fallback.
-        let mut value = Vec3::new(
-            -(normal[0] as f32 / NORMAL_SCALE as f32),
-            -(normal[1] as f32 / NORMAL_SCALE as f32),
-            normal[2] as f32 / NORMAL_SCALE as f32,
-        );
-        for (component, scale) in value.as_mut().iter_mut().zip(transform.scale) {
-            if scale == 0 {
-                return Vec3::Z.to_array();
-            }
-            *component /= scale as f32 / 1000.0;
-        }
-        for axis in 0..3 {
-            for _ in 0..transform.rotation[axis].rem_euclid(360_000) / 90_000 {
-                value = match axis {
-                    0 => Vec3::new(value.x, -value.z, value.y),
-                    1 => Vec3::new(value.z, value.y, -value.x),
-                    _ => Vec3::new(-value.y, value.x, value.z),
-                };
-            }
-        }
-        if value.length_squared() <= f32::EPSILON {
-            Vec3::Z.to_array()
-        } else {
-            value.normalize().to_array()
-        }
     }
 
     fn flat_normal(positions: [[f32; 3]; 3]) -> [f32; 3] {
@@ -959,6 +1136,14 @@ struct VertexInput {
     @location(1) color: vec3<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) uv: vec2<f32>,
+    @location(4) model_0: vec4<f32>,
+    @location(5) model_1: vec4<f32>,
+    @location(6) model_2: vec4<f32>,
+    @location(7) model_3: vec4<f32>,
+    @location(8) normal_model_0: vec4<f32>,
+    @location(9) normal_model_1: vec4<f32>,
+    @location(10) normal_model_2: vec4<f32>,
+    @location(11) normal_model_3: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -971,9 +1156,22 @@ struct VertexOutput {
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.position = camera.view_projection * vec4<f32>(input.position, 1.0);
+    let model = mat4x4<f32>(
+        input.model_0,
+        input.model_1,
+        input.model_2,
+        input.model_3,
+    );
+    let normal_model = mat4x4<f32>(
+        input.normal_model_0,
+        input.normal_model_1,
+        input.normal_model_2,
+        input.normal_model_3,
+    );
+    let world_position = model * vec4<f32>(input.position, 1.0);
+    output.position = camera.view_projection * world_position;
     output.color = input.color;
-    output.normal = input.normal;
+    output.normal = normalize((normal_model * vec4<f32>(input.normal, 0.0)).xyz);
     output.uv = input.uv;
     return output;
 }
@@ -1127,6 +1325,21 @@ mod tests {
         assert_eq!(prepared.batches[0].texture.as_deref(), Some("albedo"));
         assert_eq!(prepared.objects, 1);
         assert_eq!(prepared.culled_objects, 0);
+        assert_eq!(prepared.batches[0].vertices.len(), 3);
+        assert_eq!(prepared.batches[0].indices.len(), 3);
+        assert_eq!(prepared.batches[0].instance_count(), 1);
+
+        let mut instanced = textured_scene();
+        let mut second = instanced.objects[0].clone();
+        second.id = "object-2".into();
+        second.transform.translation = [2, 0, 0];
+        instanced.objects.push(second);
+        let prepared = scene_batches(&instanced, &textures, PhysicalSize::new(1280, 720)).unwrap();
+        assert_eq!(prepared.batches.len(), 1);
+        assert_eq!(prepared.batches[0].vertices.len(), 3);
+        assert_eq!(prepared.batches[0].indices.len(), 3);
+        assert_eq!(prepared.batches[0].instance_count(), 2);
+        assert_eq!(prepared.triangles, 2);
 
         let mut offscreen = scene;
         offscreen.objects[0].transform.translation = [10_000, 0, 0];
